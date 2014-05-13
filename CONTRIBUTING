@@ -1,0 +1,14 @@
+This is unofficial mirror, and it doesn't accept
+pull request on that. I create this mirror because
+I need a convenient place for my deployment.
+I am not involved in MooseFS develpoment.
+
+FYI, the offical git tree of the project is [2],
+which hasn't been updated since 2012.
+
+Please contact the MooseFS team [1] for more details.
+
+Thanks a lot.
+
+[1] http://www.moosefs.org/contact.html
+[2] http://sourceforge.net/p/moosefs/code/ci/master/tree/
