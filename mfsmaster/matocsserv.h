@@ -19,6 +19,7 @@
 #include "chunks.h" // MAXCSCOUNT
 
 void matocsserv_usagedifference(double *minusage,double *maxusage,uint16_t *usablescount,uint16_t *totalscount);
+uint16_t matocsserv_almostfull_servers(void);
 uint16_t matocsserv_getservers_ordered(uint16_t csids[MAXCSCOUNT],double maxusagediff,uint32_t *min,uint32_t *max);
 uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double tolerance,uint16_t demand);
 uint16_t matocsserv_getservers_lessrepl(uint16_t csids[MAXCSCOUNT],double replimit);

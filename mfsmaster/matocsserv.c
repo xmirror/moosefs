@@ -646,6 +646,20 @@ void matocsserv_recalc_createflag(double tolerance) {
 	}
 }
 
+uint16_t matocsserv_almostfull_servers(void) {
+	uint16_t cnt;
+	matocsserventry *eptr;
+	cnt = 0;
+	for (eptr = matocsservhead ; eptr ; eptr=eptr->next) {
+		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && eptr->csptr!=NULL) {
+			if ((eptr->totalspace - eptr->usedspace)<=(eptr->totalspace/100)) {
+				cnt++;
+			}
+		}
+	}
+	return cnt;
+}
+
 uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double tolerance,uint16_t demand) {
 	static uint32_t fcnt=0;
 	matocsserventry* servtab[MAXCSCOUNT];

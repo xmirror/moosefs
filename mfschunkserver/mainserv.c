@@ -824,10 +824,8 @@ uint8_t mainserv_write_middle(int sock,int fwdsock,uint64_t gchunkid,uint32_t gv
 			wrjob = wrdata.head;
 			if (wrjob->ack&1 && wrjob->hddstatus!=STATUS_OK) {
 				status = wrjob->hddstatus;
-				exitloop = 0;
 			} else if (wrjob->ack&2 && wrjob->netstatus!=STATUS_OK) {
 				status = wrjob->netstatus;
-				exitloop = 0;
 			} else if (wrjob->ack==3) {
 				status = STATUS_OK;
 				exitloop = 0;

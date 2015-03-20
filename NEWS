@@ -1,5 +1,21 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.48-1 (2015-01-14)
+
+  - (cs) fixed error handling in writing data (mainserv)
+  - (mount) fixed error handling bug in writing data module
+
+* MooseFS 2.0.47-1 (2015-01-09)
+
+  - (cs) fixed handling .metaid file
+  - (cs) fixed showing incorrect I/O error messages
+  - (cs) fixed drive removals
+
+* MooseFS 2.0.46-1 (2015-01-08)
+
+  - (master) force rebalancing when some servers are almost full (regardless of undergoal priority queues)
+  - (master) fixed potential double decreasing number of sockets in session data
+
 * MooseFS 2.0.45-1 (2014-12-24)
 
   - (mount) fixed printed informations about mapall (thanks to Tom Ivar Helbekkmo)
@@ -411,7 +427,7 @@ This file lists noteworthy changes in MooseFS.
 
 * MooseFS 1.7.4 (2013-08-14)
 
-  - (mount) read procedures have been rewriten (with read ahead support)
+  - (mount) read procedures have been rewritten (with read ahead support)
   - (mount) read+write dynamic number of workers
   - (cs) dynamic number of workers
   - (cs) fixed segfault condition during closing application

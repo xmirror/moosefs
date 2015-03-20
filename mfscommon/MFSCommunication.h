@@ -1404,7 +1404,7 @@
 
 // 0x0259
 #define CSTOCL_HDD_LIST_V2 (PROTO_BASE+601)
-// N*[ entrysize:16 path:NAME flags:8 errchunkid:64 errtime:32 used:64 total:64 chunkscount:32 bytesread:64 usecread:64 usecreadmax:64 byteswriten:64 usecwrite:64 usecwritemax:64]
+// N*[ entrysize:16 path:NAME flags:8 errchunkid:64 errtime:32 used:64 total:64 chunkscount:32 3 * [ bytesread:64 byteswritten:64 usecread:64 usecwrite:64 usecfsync:64 readops:32 writeops:32 fsyncops:32 usecreadmax:32 usecwritemax:32 usecfsyncmax:32 ] ]
 
 
 #endif

@@ -1485,6 +1485,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER,(status==STATUS_OK)?((eptr->version>=VERSION2INT(1,6,26))?35:(eptr->version>=VERSION2INT(1,6,21))?25:(eptr->version>=VERSION2INT(1,6,1))?21:13):1);
 			if (status!=STATUS_OK) {
 				put8bit(&wptr,status);
+				eptr->sesdata = NULL;
 				return;
 			}
 			sessionid = sessions_get_id(eptr->sesdata);
@@ -1549,6 +1550,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER,(status==STATUS_OK)?((eptr->version>=VERSION2INT(1,6,26))?19:(eptr->version>=VERSION2INT(1,6,21))?9:5):1);
 			if (status!=STATUS_OK) {
 				put8bit(&wptr,status);
+				eptr->sesdata = NULL;
 				return;
 			}
 			sessionid = sessions_get_id(eptr->sesdata);
@@ -1596,6 +1598,7 @@ void matoclserv_fuse_register(matoclserventry *eptr,const uint8_t *data,uint32_t
 			wptr = matoclserv_createpacket(eptr,MATOCL_FUSE_REGISTER,1);
 			put8bit(&wptr,status);
 			if (status!=STATUS_OK) {
+				eptr->sesdata = NULL;
 				return;
 			}
 			sessions_attach_session(eptr->sesdata,eptr->peerip,eptr->version);

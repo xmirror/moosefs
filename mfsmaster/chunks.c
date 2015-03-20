@@ -2050,7 +2050,7 @@ void chunk_store_info(uint8_t *buff) {
 
 //jobs state: jobshpos
 
-void chunk_do_jobs(chunk *c,uint16_t scount,double minusage,double maxusage,uint32_t now,uint8_t extrajob) {
+void chunk_do_jobs(chunk *c,uint16_t scount,uint16_t fullservers,double minusage,double maxusage,uint32_t now,uint8_t extrajob) {
 	slist *s;
 	static uint16_t *dcsids;
 	static uint16_t dservcount;
@@ -2515,15 +2515,18 @@ void chunk_do_jobs(chunk *c,uint16_t scount,double minusage,double maxusage,uint
 	if (extrajob) { // do not rebalane doing "extra" jobs.
 		return;
 	}
-	for (i=0 ; i<DANGER_PRIORITIES ; i++) {
-		if (chunks_priority_leng[i]>0) { // we have pending undergaal chunks, so ignore chunkserver rebalance
-			return;
-		}
-	}
 
-	if (c->ondangerlist) {
-		syslog(LOG_NOTICE,"chunk %016"PRIX64"_%08"PRIX32": fixing 'ondangerlist' flag",c->chunkid,c->version);
-		c->ondangerlist = 0;
+	if (fullservers==0) { // force rebalance when some servers are almost full
+		for (i=0 ; i<DANGER_PRIORITIES ; i++) {
+			if (chunks_priority_leng[i]>0) { // we have pending undergaal chunks, so ignore chunkserver rebalance
+				return;
+			}
+		}
+
+		if (c->ondangerlist) {
+			syslog(LOG_NOTICE,"chunk %016"PRIX64"_%08"PRIX32": fixing 'ondangerlist' flag",c->chunkid,c->version);
+			c->ondangerlist = 0;
+		}
 	}
 
 // step 9. if there is too big difference between chunkservers then make copy of chunk from server with biggest disk usage on server with lowest disk usage
@@ -2617,7 +2620,7 @@ static inline void chunk_clean_priority_queues(void) {
 
 void chunk_jobs_main(void) {
 	uint32_t i,j,l,h,t,lc,hashsteps;
-	uint16_t uscount,tscount;
+	uint16_t uscount,tscount,fullservers;
 	double minusage,maxusage;
 	chunk *c,*cn;
 	uint32_t now;
@@ -2641,8 +2644,10 @@ void chunk_jobs_main(void) {
 		return;
 	}
 
+	fullservers = matocsserv_almostfull_servers();
+
 	now = main_time();
-	chunk_do_jobs(NULL,JOBS_EVERYTICK,0.0,0.0,now,0);
+	chunk_do_jobs(NULL,JOBS_EVERYTICK,0,0.0,0.0,now,0);
 
 	// first serve some endangered and undergoal chunks
 	lc = 0;
@@ -2673,7 +2678,7 @@ void chunk_jobs_main(void) {
 				chunks_priority_leng[j]--;
 				if (c!=NULL) {
 					c->ondangerlist = 0;
-					chunk_do_jobs(c,uscount,minusage,maxusage,now,1);
+					chunk_do_jobs(c,uscount,fullservers,minusage,maxusage,now,1);
 					lc++;
 				}
 			} while (t!=h && lc<HashCPTMax);
@@ -2693,7 +2698,7 @@ void chunk_jobs_main(void) {
 	hashsteps = 1+((chunkrehashpos)/(LoopTimeMin*TICKSPERSECOND));
 	for (i=0 ; i<hashsteps && lc<HashCPTMax ; i++) {
 		if (jobshpos>=chunkrehashpos) {
-			chunk_do_jobs(NULL,JOBS_EVERYLOOP,0.0,0.0,now,0);	// every loop tasks
+			chunk_do_jobs(NULL,JOBS_EVERYLOOP,0,0.0,0.0,now,0);	// every loop tasks
 			jobshpos=0;
 		} else {
 			c = chunkhashtab[jobshpos>>HASHTAB_LOBITS][jobshpos&HASHTAB_MASK];
@@ -2703,7 +2708,7 @@ void chunk_jobs_main(void) {
 					changelog("%"PRIu32"|CHUNKDEL(%"PRIu64",%"PRIu32")",main_time(),c->chunkid,c->version);
 					chunk_delete(c);
 				} else {
-					chunk_do_jobs(c,uscount,minusage,maxusage,now,0);
+					chunk_do_jobs(c,uscount,fullservers,minusage,maxusage,now,0);
 					lc++;
 				}
 				c = cn;
@@ -2730,13 +2735,13 @@ void chunk_jobs_main(void) {
 		// do jobs on rest of them
 //			for (c=chunkhash[jobshpos] ; c ; c=c->next) {
 //				if (l>=r) {
-//					chunk_do_jobs(c,uscount,minusage,maxusage);
+//					chunk_do_jobs(c,uscount,0,minusage,maxusage);
 //				}
 //				l++;
 //			}
 //			l=0;
 //			for (c=chunkhash[jobshpos] ; l<r && c ; c=c->next) {
-//				chunk_do_jobs(c,uscount,minusage,maxusage);
+//				chunk_do_jobs(c,uscount,0,minusage,maxusage);
 //				l++;
 //			}
 //		}
@@ -2917,7 +2922,7 @@ void chunk_cleanup(void) {
 		}
 	}
 //	jobshpos = 0;
-//	chunk_do_jobs(NULL,JOBS_INIT,0.0,0.0);	// clear chunk loop internal data
+//	chunk_do_jobs(NULL,JOBS_INIT,0,0.0,0.0);	// clear chunk loop internal data
 }
 
 void chunk_newfs(void) {
@@ -3222,7 +3227,7 @@ int chunk_strinit(void) {
 		chunks_priority_head[j] = 0;
 		chunks_priority_tail[j] = 0;
 	}
-	chunk_do_jobs(NULL,JOBS_INIT,0.0,0.0,main_time(),0);	// clear chunk loop internal data
+	chunk_do_jobs(NULL,JOBS_INIT,0,0.0,0.0,main_time(),0);	// clear chunk loop internal data
 
 	main_reload_register(chunk_reload);
 	// main_time_register(1,0,chunk_jobs_main);

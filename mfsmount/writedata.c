@@ -564,12 +564,16 @@ void* write_worker(void *arg) {
 
 		id = (inodedata*)data;
 
-		if (id->datachainhead) {
-			chindx = id->datachainhead->chindx;
-			status = id->status;
+		if (id->status==0) {
+			if (id->datachainhead) {
+				chindx = id->datachainhead->chindx;
+				status = id->status;
+			} else {
+				syslog(LOG_WARNING,"writeworker got inode with no data to write !!!");
+				status = EINVAL;	// this should never happen, so status is not important - just anything
+			}
 		} else {
-			syslog(LOG_WARNING,"writeworker got inode with no data to write !!!");
-			status = EINVAL;	// this should never happen, so status is not important - just anything
+			status = id->status;
 		}
 
 		zassert(pthread_mutex_unlock(&glock));
@@ -1142,12 +1146,8 @@ void* write_worker(void *arg) {
 
 		for (cnt=0 ; cnt<10 ; cnt++) {
 			westatus = fs_writeend(chunkid,id->inode,mfleng);
-			if (westatus==ERROR_ENOENT) {
-				write_job_end(id,EBADF,0);
-				continue;
-			} else if (westatus==ERROR_QUOTA) {
-				write_job_end(id,EDQUOT,0);
-				continue;
+			if (westatus==ERROR_ENOENT || westatus==ERROR_QUOTA) {
+				break;
 			} else if (westatus!=STATUS_OK) {
 				portable_usleep(100000+(10000<<cnt));
 			} else {
@@ -1155,7 +1155,11 @@ void* write_worker(void *arg) {
 			}
 		}
 
-		if (westatus!=STATUS_OK) {
+		if (westatus==ERROR_ENOENT) {
+			write_job_end(id,EBADF,0);
+		} else if (westatus==ERROR_QUOTA) {
+			write_job_end(id,EDQUOT,0);
+		} else if (westatus!=STATUS_OK) {
 			write_job_end(id,ENXIO,0);
 		} else if (status!=0 || wrstatus!=STATUS_OK) {
 			if (wrstatus!=STATUS_OK) {	// convert MFS status to OS errno
