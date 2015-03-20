@@ -1471,6 +1471,7 @@ void* fs_receive_thread(void *arg) {
 	uint8_t hdr[12];
 	threc *rec;
 	uint32_t cmd,size,packetid;
+	uint32_t rcvd;
 //	static uint8_t *notify_buff=NULL;
 //	static uint32_t notify_buff_size=0;
 	int r;
@@ -1526,12 +1527,12 @@ void* fs_receive_thread(void *arg) {
 		r = tcptoread(fd,hdr,12,RECEIVE_TIMEOUT*1000);	// read timeout
 		// syslog(LOG_NOTICE,"master: header size: %d",r);
 		if (r==0) {
-			syslog(LOG_WARNING,"master: connection lost (1)");
+			syslog(LOG_WARNING,"master: connection lost (header)");
 			disconnect=1;
 			continue;
 		}
 		if (r!=12) {
-			syslog(LOG_WARNING,"master: tcp recv error: %s (1)",strerr(errno));
+			syslog(LOG_WARNING,"master: tcp recv error: %s (header)",strerr(errno));
 			disconnect=1;
 			continue;
 		}
@@ -1644,22 +1645,44 @@ void* fs_receive_thread(void *arg) {
 			continue;
 		}
 		// syslog(LOG_NOTICE,"master: expected data size: %"PRIu32,size);
-		if (size>0) {
-			r = tcptoread(fd,rec->ibuff,size,1000);
+		rcvd = 0;
+		while (size-rcvd>65536) {
+			r = tcptoread(fd,rec->ibuff+rcvd,65536,RECEIVE_TIMEOUT*1000);
 			// syslog(LOG_NOTICE,"master: data size: %d",r);
 			if (r==0) {
-				syslog(LOG_WARNING,"master: connection lost (2)");
+				syslog(LOG_WARNING,"master: connection lost (data)");
+				pthread_mutex_unlock(&(rec->mutex));
+				disconnect=1;
+				break;
+			}
+			if (r!=65536) {
+				syslog(LOG_WARNING,"master: tcp recv error: %s (data)",strerr(errno));
+				pthread_mutex_unlock(&(rec->mutex));
+				disconnect=1;
+				break;
+			}
+			master_stats_add(MASTER_BYTESRCVD,65536);
+			rcvd += 65536;
+		}
+		if (disconnect) {
+			continue;
+		}
+		if (size-rcvd>0) {
+			r = tcptoread(fd,rec->ibuff+rcvd,size-rcvd,RECEIVE_TIMEOUT*1000);
+			// syslog(LOG_NOTICE,"master: data size: %d",r);
+			if (r==0) {
+				syslog(LOG_WARNING,"master: connection lost (data)");
 				pthread_mutex_unlock(&(rec->mutex));
 				disconnect=1;
 				continue;
 			}
-			if (r!=(int32_t)(size)) {
-				syslog(LOG_WARNING,"master: tcp recv error: %s (2)",strerr(errno));
+			if (r!=(int32_t)(size-rcvd)) {
+				syslog(LOG_WARNING,"master: tcp recv error: %s (data)",strerr(errno));
 				pthread_mutex_unlock(&(rec->mutex));
 				disconnect=1;
 				continue;
 			}
-			master_stats_add(MASTER_BYTESRCVD,size);
+			master_stats_add(MASTER_BYTESRCVD,size-rcvd);
 		}
 		rec->sent = 0;
 		rec->status = 0;

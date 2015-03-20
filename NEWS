@@ -1,5 +1,9 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.54-1 (2015-03-11)
+
+  - (mount) fixed network timeouts in master-mount connection module.
+
 * MooseFS 2.0.53-1 (2015-03-10)
 
   - (master) fixed possible reference to freed memory during metadata recovery
