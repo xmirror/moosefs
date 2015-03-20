@@ -1916,7 +1916,7 @@ if "IN" in sectionset:
 					else:
 						out.append("""		<td align="center"><a style="cursor:default" title="obtaining memory usage is not supported by your OS or can't be obtained from server">not available</td>""")
 					if syscpu>0 or usercpu>0:
-						out.append("""		<td align="center"><a style="cursor:default" title="all:%.7f%% sys:%.7f%% user:%.7f">all:%.2f%%&nbsp;sys:%.2f%%&nbsp;user:%.2f%%</a></td>""" % (syscpu+usercpu,syscpu,usercpu,syscpu+usercpu,syscpu,usercpu))
+						out.append("""		<td align="center"><a style="cursor:default" title="all:%.7f%% sys:%.7f%% user:%.7f%%">all:%.2f%%&nbsp;sys:%.2f%%&nbsp;user:%.2f%%</a></td>""" % (syscpu+usercpu,syscpu,usercpu,syscpu+usercpu,syscpu,usercpu))
 					else:
 						out.append("""		<td align="center"><a style="cursor:default" title="obtaining cpu usage is not supported by your OS or can't be obtained from server">not available</td>""")
 					if lastsuccessfulstore>0:
@@ -1940,9 +1940,9 @@ if "IN" in sectionset:
 						clist.append("not available")
 					if syscpu>0 or usercpu>0:
 						if ttymode:
-							clist.append("all:%.2f%% sys:%.2f%% user:%.2f" % (syscpu+usercpu,syscpu,usercpu))
+							clist.append("all:%.2f%% sys:%.2f%% user:%.2f%%" % (syscpu+usercpu,syscpu,usercpu))
 						else:
-							clist.append("all:%.7f%% sys:%.7f%% user:%.7f" % (syscpu+usercpu,syscpu,usercpu))
+							clist.append("all:%.7f%% sys:%.7f%% user:%.7f%%" % (syscpu+usercpu,syscpu,usercpu))
 					else:
 						clist.append("not available")
 					if lastsuccessfulstore>0:

@@ -1,3 +1,9 @@
+moosefs-ce (2.0.51-1) unstable; urgency=medium
+
+  * (master+cgi+cli) added quota-licences (pro version only)
+
+ -- MooseFS Team <contact@moosefs.com>  Thu, 26 Feb 2015 12:00:00 +0100
+
 moosefs-ce (2.0.50-1) unstable; urgency=medium
 
   * (master) fixed descriptor leak

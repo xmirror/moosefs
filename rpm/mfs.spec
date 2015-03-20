@@ -20,7 +20,7 @@
 
 Summary:	MooseFS - distributed, fault tolerant file system
 Name:		moosefs-ce
-Version:	2.0.50
+Version:	2.0.51
 Release:	1%{?_relname}
 License:	commercial
 Group:		System Environment/Daemons
@@ -155,9 +155,9 @@ make install \
 %if "%{distro}" == "rhsysv"
 install -d $RPM_BUILD_ROOT%{_initrddir}
 for f in rpm/rh/*.init ; do
-	sed -e 's,@sysconfdir@,%{_sysconfdir},;
-		s,@sbindir@,%{_sbindir},;
-		s,@initddir@,%{_initrddir},' $f > $RPM_BUILD_ROOT%{_initrddir}/$(basename $f .init)
+	sed -e 's,@sysconfdir@,%{_sysconfdir},g;
+		s,@sbindir@,%{_sbindir},g;
+		s,@initddir@,%{_initrddir},g' $f > $RPM_BUILD_ROOT%{_initrddir}/$(basename $f .init)
 done
 %endif
 
@@ -180,8 +180,12 @@ for fname in mfsexports mfstopology mfsmaster; do
 		cp %{mfsconfdir}/${fname}.cfg.dist %{mfsconfdir}/${fname}.cfg
 	fi
 done
+if [ ! -f %{_localstatedir}/mfs/metadata.mfs -a ! -f %{_localstatedir}/mfs/metadata.mfs.back -a -f %{_localstatedir}/mfs/metadata.mfs.empty ]; then
+	cp %{_localstatedir}/mfs/metadata.mfs.empty %{_localstatedir}/mfs/metadata.mfs
+fi
 chown -R %{_username}:%{_groupname} %{_localstatedir}/mfs
-chmod -R u+rwx %{_localstatedir}/mfs
+chmod -R u+rw %{_localstatedir}/mfs
+chmod u+x %{_localstatedir}/mfs
 exit 0
 
 
@@ -270,10 +274,10 @@ exit 0
 %dir %{_localstatedir}/mfs
 %{_localstatedir}/mfs/metadata.mfs.empty
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/mfsmaster
+%attr(754,root,root) %{_initrddir}/moosefs-ce-master
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/mfsmaster.service
+%{systemdunitdir}/moosefs-ce-master.service
 %endif
 
 
@@ -288,10 +292,10 @@ exit 0
 %{mfsconfdir}/mfsmetalogger.cfg.dist
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/mfsmetalogger
+%attr(754,root,root) %{_initrddir}/moosefs-ce-metalogger
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/mfsmetalogger.service
+%{systemdunitdir}/moosefs-ce-metalogger.service
 %endif
 
 
@@ -309,10 +313,10 @@ exit 0
 %{mfsconfdir}/mfshdd.cfg.dist
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/mfschunkserver
+%attr(754,root,root) %{_initrddir}/moosefs-ce-chunkserver
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/mfschunkserver.service
+%{systemdunitdir}/moosefs-ce-chunkserver.service
 %endif
 
 
@@ -405,10 +409,10 @@ exit 0
 %{_mandir}/man8/mfscgiserv.8*
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/mfscgiserv
+%attr(754,root,root) %{_initrddir}/moosefs-ce-cgiserv
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/mfscgiserv.service
+%{systemdunitdir}/moosefs-ce-cgiserv.service
 %endif
 
 

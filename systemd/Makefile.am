@@ -1,13 +1,13 @@
 systemdunit_DATA =
 if INSTALL_CGISERV
-systemdunit_DATA += mfscgiserv.service
+systemdunit_DATA += moosefs-ce-cgiserv.service
 endif
 if BUILD_CHUNKSERVER
-systemdunit_DATA += mfschunkserver.service
+systemdunit_DATA += moosefs-ce-chunkserver.service
 endif
 if BUILD_MASTER
-systemdunit_DATA += mfsmaster.service
+systemdunit_DATA += moosefs-ce-master.service
 endif
 if BUILD_METALOGGER
-systemdunit_DATA += mfsmetalogger.service
+systemdunit_DATA += moosefs-ce-metalogger.service
 endif

@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.60)
-AC_INIT([MFS], [2.0.50], [bugs@moosefs.com], [moosefs-ce])
+AC_INIT([MFS], [2.0.51], [bugs@moosefs.com], [moosefs-ce])
 release=1
 
 dnl AC_CONFIG_SRCDIR([MFSCommunication.h])
@@ -547,9 +547,9 @@ AC_CONFIG_FILES([Makefile
 		mfsdata/mfsmaster.cfg
 		mfsdata/mfsmetalogger.cfg
 		mfsdata/mfsmount.cfg
-		systemd/mfscgiserv.service
-		systemd/mfschunkserver.service
-		systemd/mfsmaster.service
-		systemd/mfsmetalogger.service
+		systemd/moosefs-ce-cgiserv.service
+		systemd/moosefs-ce-chunkserver.service
+		systemd/moosefs-ce-master.service
+		systemd/moosefs-ce-metalogger.service
 ])
 AC_OUTPUT

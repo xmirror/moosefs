@@ -1,5 +1,9 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.51-1 (2015-02-26)
+
+  - (master+cgi+cli) added quota-licences (pro version only)
+
 * MooseFS 2.0.50-1 (2015-02-10)
 
   - (master) fixed descriptor leak

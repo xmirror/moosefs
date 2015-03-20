@@ -5789,6 +5789,7 @@ uint8_t fs_mr_quota(uint32_t ts,uint32_t inode,uint8_t exceeded,uint8_t flags,ui
 	return STATUS_OK;
 }
 
+
 uint32_t fs_getquotainfo_size() {
 	quotanode *qn;
 	uint32_t s=0,size;
@@ -7346,26 +7347,26 @@ uint8_t fs_storequota(bio *fd) {
 	ptr=wbuff;
 	for (qn = quotahead ; qn ; qn=qn->next) {
 		if (l==100) {
-			if (bio_write(fd,wbuff,66*100)!=(66*100)) {
-				syslog(LOG_NOTICE,"write error");
-				return 0xFF;
+				if (bio_write(fd,wbuff,66*100)!=(66*100)) {
+					syslog(LOG_NOTICE,"write error");
+					return 0xFF;
+				}
+				l=0;
+				ptr=wbuff;
 			}
-			l=0;
-			ptr=wbuff;
-		}
-		put32bit(&ptr,qn->node->id);
-		put8bit(&ptr,qn->exceeded);
-		put8bit(&ptr,qn->flags);
-		put32bit(&ptr,qn->stimestamp);
-		put32bit(&ptr,qn->sinodes);
-		put32bit(&ptr,qn->hinodes);
-		put64bit(&ptr,qn->slength);
-		put64bit(&ptr,qn->hlength);
-		put64bit(&ptr,qn->ssize);
-		put64bit(&ptr,qn->hsize);
-		put64bit(&ptr,qn->srealsize);
-		put64bit(&ptr,qn->hrealsize);
-		l++;
+			put32bit(&ptr,qn->node->id);
+			put8bit(&ptr,qn->exceeded);
+			put8bit(&ptr,qn->flags);
+			put32bit(&ptr,qn->stimestamp);
+			put32bit(&ptr,qn->sinodes);
+			put32bit(&ptr,qn->hinodes);
+			put64bit(&ptr,qn->slength);
+			put64bit(&ptr,qn->hlength);
+			put64bit(&ptr,qn->ssize);
+			put64bit(&ptr,qn->hsize);
+			put64bit(&ptr,qn->srealsize);
+			put64bit(&ptr,qn->hrealsize);
+			l++;
 	}
 	if (l>0) {
 		if (bio_write(fd,wbuff,66*l)!=(66*l)) {
