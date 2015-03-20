@@ -1,10 +1,17 @@
-moosefs-ce (2.0.54-1) unstable; urgency=medium
+moosefs (2.0.60-1) unstable; urgency=medium
+
+  * (all) changed license of standard version to GPLv2
+  * (all) changed name moosefs-ce to just moosefs
+
+ -- MooseFS Team <contact@moosefs.com>  Wed, 18 Mar 2015 12:00:00 +0100
+
+moosefs (2.0.54-1) unstable; urgency=medium
 
   * (mount) fixed network timeouts in master-mount connection module.
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 11 Mar 2015 12:00:00 +0100
 
-moosefs-ce (2.0.53-1) unstable; urgency=medium
+moosefs (2.0.53-1) unstable; urgency=medium
 
   * (master) fixed possible reference to freed memory during metadata recovery
   * (master) added minimal priority queue length
@@ -14,39 +21,39 @@ moosefs-ce (2.0.53-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 10 Mar 2015 12:00:00 +0100
 
-moosefs-ce (2.0.52-1) unstable; urgency=medium
+moosefs (2.0.52-1) unstable; urgency=medium
 
   * (master) added option for setting length of chunks priority queues
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 04 Mar 2015 12:00:00 +0100
 
-moosefs-ce (2.0.51-1) unstable; urgency=medium
+moosefs (2.0.51-1) unstable; urgency=medium
 
   * (master+cgi+cli) added quota-licences (pro version only)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 26 Feb 2015 12:00:00 +0100
 
-moosefs-ce (2.0.50-1) unstable; urgency=medium
+moosefs (2.0.50-1) unstable; urgency=medium
 
   * (master) fixed descriptor leak
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 10 Feb 2015 12:00:00 +0100
 
-moosefs-ce (2.0.49-1) unstable; urgency=medium
+moosefs (2.0.49-1) unstable; urgency=medium
 
   * (cs) made fsync before close optional
   * (all) added missing options to manpages
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 02 Feb 2015 12:00:00 +0100
 
-moosefs-ce (2.0.48-1) unstable; urgency=medium
+moosefs (2.0.48-1) unstable; urgency=medium
 
   * (cs) fixed error handling in writing data (mainserv)
   * (mount) fixed error handling bug in writing data module
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 14 Jan 2015 12:00:00 +0100
 
-moosefs-ce (2.0.47-1) unstable; urgency=medium
+moosefs (2.0.47-1) unstable; urgency=medium
 
   * (cs) fixed handling .metaid file
   * (cs) fixed showing incorrect I/O error messages
@@ -54,7 +61,7 @@ moosefs-ce (2.0.47-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 09 Jan 2015 12:00:00 +0100
 
-moosefs-ce (2.0.46-1) unstable; urgency=medium
+moosefs (2.0.46-1) unstable; urgency=medium
 
   * (master) force rebalancing when some servers are almost full (regardless of
     undergoal priority queues)
@@ -63,7 +70,7 @@ moosefs-ce (2.0.46-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 08 Jan 2015 12:00:00 +0100
 
-moosefs-ce (2.0.45-1) unstable; urgency=medium
+moosefs (2.0.45-1) unstable; urgency=medium
 
   * (mount) fixed printed informations about mapall (thanks to Tom Ivar
     Helbekkmo)
@@ -72,13 +79,13 @@ moosefs-ce (2.0.45-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 24 Dec 2014 12:00:00 +0100
 
-moosefs-ce (2.0.44-1) unstable; urgency=medium
+moosefs (2.0.44-1) unstable; urgency=medium
 
   * (master) fixed read rebalance limit
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 27 Nov 2014 12:00:00 +0100
 
-moosefs-ce (2.0.43-1) unstable; urgency=medium
+moosefs (2.0.43-1) unstable; urgency=medium
 
   * (master) introducing new licence model (new licences with size limit for
     pro version)
@@ -87,7 +94,7 @@ moosefs-ce (2.0.43-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 31 Oct 2014 12:00:00 +0100
 
-moosefs-ce (2.0.42-1) unstable; urgency=medium
+moosefs (2.0.42-1) unstable; urgency=medium
 
   * (tools) fixed printing ip numbers in mfsfileinfo
   * (mount) changed format of ip numbers in messages from hex to standard
@@ -95,13 +102,13 @@ moosefs-ce (2.0.42-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 29 Oct 2014 12:00:00 +0100
 
-moosefs-ce (2.0.41-1) unstable; urgency=medium
+moosefs (2.0.41-1) unstable; urgency=medium
 
   * (mount) fixed buffer overrun (FreeBSD and OS X only)
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 21 Oct 2014 13:00:00 +0200
 
-moosefs-ce (2.0.40-1) unstable; urgency=medium
+moosefs (2.0.40-1) unstable; urgency=medium
 
   * (cs) fixed serious bug (new chunks were created on disks 'marked for
     removal') - introduced in 1.7.31
@@ -113,27 +120,27 @@ moosefs-ce (2.0.40-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 15 Oct 2014 13:00:00 +0200
 
-moosefs-ce (2.0.39-1) unstable; urgency=medium
+moosefs (2.0.39-1) unstable; urgency=medium
 
   * (mount) added ability to mount from /etc/fstab on FreeBSD
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 06 Oct 2014 13:00:00 +0200
 
-moosefs-ce (2.0.38-1) unstable; urgency=medium
+moosefs (2.0.38-1) unstable; urgency=medium
 
   * (mount) fixed memory leak in workaround on FreeBSD early-release bug
     (FreeBSD only)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 02 Oct 2014 13:00:00 +0200
 
-moosefs-ce (2.0.37-1) unstable; urgency=medium
+moosefs (2.0.37-1) unstable; urgency=medium
 
   * (cs) added internal open files limit
   * (master) changed chunkserver choosing algorithm
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 23 Sep 2014 13:00:00 +0200
 
-moosefs-ce (2.0.36-1) unstable; urgency=medium
+moosefs (2.0.36-1) unstable; urgency=medium
 
   * (cgi) fixed sorting masters by ip
   * (master) fixed acl posix compatibility (two tests from pjd)
@@ -141,21 +148,21 @@ moosefs-ce (2.0.36-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 18 Sep 2014 13:00:00 +0200
 
-moosefs-ce (2.0.35-1) unstable; urgency=medium
+moosefs (2.0.35-1) unstable; urgency=medium
 
   * (freebsd) fixed cgiserv and cli port
   * (mount) fixed setting acl
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 12 Sep 2014 13:00:00 +0200
 
-moosefs-ce (2.0.34-1) unstable; urgency=medium
+moosefs (2.0.34-1) unstable; urgency=medium
 
   * (mount) workaround for bug in FreeBSD Fuse version
   * (master) added setting correct metaid in "new" followers (pro version only)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 21 Aug 2014 13:00:00 +0200
 
-moosefs-ce (2.0.33-1) unstable; urgency=medium
+moosefs (2.0.33-1) unstable; urgency=medium
 
   * (cs,supervisor) more reliable network code in supervisor module (pro
     version only)
@@ -164,14 +171,14 @@ moosefs-ce (2.0.33-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 18 Aug 2014 13:00:00 +0200
 
-moosefs-ce (2.0.32-1) unstable; urgency=medium
+moosefs (2.0.32-1) unstable; urgency=medium
 
   * (cs) changed delay handling method (delayed file close,free crc block etc.)
   * (mount) fixed truncate loop (fixed bug intr. in 2.0.26)
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 13 Aug 2014 13:00:00 +0200
 
-moosefs-ce (2.0.31-1) unstable; urgency=medium
+moosefs (2.0.31-1) unstable; urgency=medium
 
   * (cs) fixed bug: write data error not causing exit from write loop -
     sometimes could lead to segfault.
@@ -180,33 +187,33 @@ moosefs-ce (2.0.31-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 12 Aug 2014 13:00:00 +0200
 
-moosefs-ce (2.0.30-1) unstable; urgency=medium
+moosefs (2.0.30-1) unstable; urgency=medium
 
   * (daemons) added writing pid to lockfile
   * (all) added freebsd port-maker
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 09 Jul 2014 13:00:00 +0200
 
-moosefs-ce (2.0.29-1) unstable; urgency=medium
+moosefs (2.0.29-1) unstable; urgency=medium
 
   * (cs) moved fsync to background (improved write performance)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 03 Jul 2014 13:00:00 +0200
 
-moosefs-ce (2.0.28-1) unstable; urgency=medium
+moosefs (2.0.28-1) unstable; urgency=medium
 
   * (master) fixed syslog message about metaloggers in masters (pro version
     only)
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 30 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.27-1) unstable; urgency=medium
+moosefs (2.0.27-1) unstable; urgency=medium
 
   * (tools) added to mfsfileinfo checksum digest and file signature calculation
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 27 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.26-1) unstable; urgency=medium
+moosefs (2.0.26-1) unstable; urgency=medium
 
   * (cs) fixed bug in replicator
   * (mount) fixed truncate loop
@@ -215,14 +222,14 @@ moosefs-ce (2.0.26-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 26 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.25-1) unstable; urgency=medium
+moosefs (2.0.25-1) unstable; urgency=medium
 
   * (mount) better handling error counters
   * (master) fixed replication status handling
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 23 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.24-1) unstable; urgency=medium
+moosefs (2.0.24-1) unstable; urgency=medium
 
   * (master) added unfinished replications detection
   * (master) added source ip and port in replication status message
@@ -231,7 +238,7 @@ moosefs-ce (2.0.24-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 23 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.23-1) unstable; urgency=medium
+moosefs (2.0.23-1) unstable; urgency=medium
 
   * (mount) changed chunkserver choosing algorithm
   * (master) added checks for busy/operation mismatch
@@ -241,14 +248,14 @@ moosefs-ce (2.0.23-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 18 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.22-1) unstable; urgency=medium
+moosefs (2.0.22-1) unstable; urgency=medium
 
   * (master) add chunks to priority queues after chunk damage, chunk lost and
     set goal
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 17 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.21-1) unstable; urgency=medium
+moosefs (2.0.21-1) unstable; urgency=medium
 
   * (supervisor+cstool) fixed version shown
   * (supervisor) fixed 'DEAD' master recognition routine
@@ -256,7 +263,7 @@ moosefs-ce (2.0.21-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 17 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.20-1) unstable; urgency=medium
+moosefs (2.0.20-1) unstable; urgency=medium
 
   * (cs) fixed handling unfinished jobs on socket timeout
   * (master) fixed missing chunks CHUNKDEL LEADER/FOLLOWER race condition (pro
@@ -268,40 +275,40 @@ moosefs-ce (2.0.20-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 16 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.19-1) unstable; urgency=medium
+moosefs (2.0.19-1) unstable; urgency=medium
 
   * (master+cs) added support for 'get version' packet
   * (all) fixed licence text in source files
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 13 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.18-1) unstable; urgency=medium
+moosefs (2.0.18-1) unstable; urgency=medium
 
   * (cs) fixed bandwidth charts
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 12 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.17-1) unstable; urgency=medium
+moosefs (2.0.17-1) unstable; urgency=medium
 
   * (daemons) added 'info' handler (for future use)
   * (master) changed median to arithmetic mean in 'new chunk' algorithm
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 12 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.16-1) unstable; urgency=medium
+moosefs (2.0.16-1) unstable; urgency=medium
 
   * (master+cs) added 'maxentries' to chart data packet
   * (master) improved median usage calculations
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 11 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.15-1) unstable; urgency=medium
+moosefs (2.0.15-1) unstable; urgency=medium
 
   * (master) fixed floating replication limits
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 10 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.14-1) unstable; urgency=medium
+moosefs (2.0.14-1) unstable; urgency=medium
 
   * (master) replication limits can be defined as floating point numbers
   * (master+cgi+cli) changed store status (background,download and foreground)
@@ -311,14 +318,14 @@ moosefs-ce (2.0.14-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 10 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.13-1) unstable; urgency=medium
+moosefs (2.0.13-1) unstable; urgency=medium
 
   * (master) added separate replication limits for different cases
   * (cs) deleting already deleted chunk returns status ok.
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 09 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.12-1) unstable; urgency=medium
+moosefs (2.0.12-1) unstable; urgency=medium
 
   * (mount) changed readworker behaviour in case of having no data to read
   * (master) added block version check during metadata read
@@ -327,7 +334,7 @@ moosefs-ce (2.0.12-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 06 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.11-1) unstable; urgency=medium
+moosefs (2.0.11-1) unstable; urgency=medium
 
   * (cgi) fixed missing master condition
   * (netdump) new binary - mfsnetdump
@@ -337,7 +344,7 @@ moosefs-ce (2.0.11-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 03 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.10-1) unstable; urgency=medium
+moosefs (2.0.10-1) unstable; urgency=medium
 
   * (cgi) added colors for versions
   * (master) fixed dirinfo counters update on write in master-follower (pro
@@ -345,26 +352,26 @@ moosefs-ce (2.0.10-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 02 Jun 2014 13:00:00 +0200
 
-moosefs-ce (2.0.9-1) unstable; urgency=medium
+moosefs (2.0.9-1) unstable; urgency=medium
 
   * (all) fixed compatibility with very old compilers
   * (cgi) added avg line and tooltips to '%used' bars
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 30 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.8-1) unstable; urgency=medium
+moosefs (2.0.8-1) unstable; urgency=medium
 
   * (master) even better replication priority algorithm
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 29 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.7-1) unstable; urgency=medium
+moosefs (2.0.7-1) unstable; urgency=medium
 
   * (master) improved replication priority algorithm
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 28 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.6-1) unstable; urgency=medium
+moosefs (2.0.6-1) unstable; urgency=medium
 
   * (master) added replication priority
     "pseudomissing->endangered->undergoal->rebalance"
@@ -373,14 +380,14 @@ moosefs-ce (2.0.6-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 27 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.5-1) unstable; urgency=medium
+moosefs (2.0.5-1) unstable; urgency=medium
 
   * (master) fixed finding best metadata file (-a option)
   * (cs) fixed infinite loop condition in sockets module
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 26 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.4-1) unstable; urgency=medium
+moosefs (2.0.4-1) unstable; urgency=medium
 
   * (master+mount) fixed "chunk lost" condition during cs registration
   * (mount) fixed support for "tail -f"
@@ -388,7 +395,7 @@ moosefs-ce (2.0.4-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 22 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.3-1) unstable; urgency=medium
+moosefs (2.0.3-1) unstable; urgency=medium
 
   * (master) autorepair chunk version for standard scenarios
   * (master) fixed dealing with chunks that doesn't exist in metadata
@@ -397,14 +404,14 @@ moosefs-ce (2.0.3-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 20 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.2-1) unstable; urgency=medium
+moosefs (2.0.2-1) unstable; urgency=medium
 
   * (mount) turn on posix-ACL's by default
   * (mount) add release number to version reporting (in df -i)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 15 May 2014 13:00:00 +0200
 
-moosefs-ce (2.0.1-1) unstable; urgency=medium
+moosefs (2.0.1-1) unstable; urgency=medium
 
   * (master) download meta file from followers
   * (master) added "get paths" and "get parents" commands
@@ -421,7 +428,7 @@ moosefs-ce (2.0.1-1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 14 May 2014 13:00:00 +0200
 
-moosefs-ce (1.7.31) unstable; urgency=medium
+moosefs (1.7.31) unstable; urgency=medium
 
   * (cs) fixed choosing disk algorithm
   * (cs) removed (some) unimportant syslog messages
@@ -431,26 +438,26 @@ moosefs-ce (1.7.31) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 01 Apr 2014 13:00:00 +0200
 
-moosefs-ce (1.7.30) unstable; urgency=medium
+moosefs (1.7.30) unstable; urgency=medium
 
   * (cs) fixed compatibility with mfs 1.6
   * (mount) fixed "no xattr" bit bug (intr. in 1.7.25)
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 26 Mar 2014 12:00:00 +0100
 
-moosefs-ce (1.7.29) unstable; urgency=medium
+moosefs (1.7.29) unstable; urgency=medium
 
   * (cs) fixed descriptor leak (intr. in 1.7.25)
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 26 Mar 2014 12:00:00 +0100
 
-moosefs-ce (1.7.28) unstable; urgency=medium
+moosefs (1.7.28) unstable; urgency=medium
 
   * (all) fixed thread creation routine (introduced in 1.7.24)
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 11 Mar 2014 12:00:00 +0100
 
-moosefs-ce (1.7.27) unstable; urgency=medium
+moosefs (1.7.27) unstable; urgency=medium
 
   * (cs) added memory chart
   * (master+cs) added virtual memory usage to memory charts
@@ -459,13 +466,13 @@ moosefs-ce (1.7.27) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 11 Mar 2014 12:00:00 +0100
 
-moosefs-ce (1.7.26) unstable; urgency=medium
+moosefs (1.7.26) unstable; urgency=medium
 
   * (master+mount) create file using one command
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 05 Mar 2014 12:00:00 +0100
 
-moosefs-ce (1.7.25) unstable; urgency=medium
+moosefs (1.7.25) unstable; urgency=medium
 
   * (all) fixed another bug in new network module (introduced in 1.7.21 and
     1.7.22)
@@ -480,7 +487,7 @@ moosefs-ce (1.7.25) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 27 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.24) unstable; urgency=medium
+moosefs (1.7.24) unstable; urgency=medium
 
   * (mount) fixed xattr cache bug
   * (master) fixed ENOSPC condition after switching
@@ -491,67 +498,67 @@ moosefs-ce (1.7.24) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 19 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.23) unstable; urgency=medium
+moosefs (1.7.23) unstable; urgency=medium
 
   * (master) bug fix version (bugs introduced in 1.7.21 and 1.7.22)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 06 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.22) unstable; urgency=medium
+moosefs (1.7.22) unstable; urgency=medium
 
   * (master) fixed cs disconnection (make master responsive during
     disconnection)
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 05 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.21) unstable; urgency=medium
+moosefs (1.7.21) unstable; urgency=medium
 
   * (master) fixed master<->chunkserver network module (make master responsive
     during chunk registration)
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 05 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.20) unstable; urgency=medium
+moosefs (1.7.20) unstable; urgency=medium
 
   * (mount) added negative lookup cache
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 03 Feb 2014 12:00:00 +0100
 
-moosefs-ce (1.7.19) unstable; urgency=medium
+moosefs (1.7.19) unstable; urgency=medium
 
   * (mount) added xattr cache
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 30 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.18) unstable; urgency=medium
+moosefs (1.7.18) unstable; urgency=medium
 
   * (mount) setting FUSE capabilities (improved efficiency)
   * (cs) fixed disk choosing algorithm
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 29 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.17) unstable; urgency=medium
+moosefs (1.7.17) unstable; urgency=medium
 
   * (cs) fixed mutex double-lock error (introduced in 1.7.14)
   * (master) improved calculation of init hash size
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 28 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.16) unstable; urgency=medium
+moosefs (1.7.16) unstable; urgency=medium
 
   * (master+cgi+cli) memory usage detailed report
   * (master+cs+ml) fixed starvation scenario in network modules
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 22 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.15) unstable; urgency=medium
+moosefs (1.7.15) unstable; urgency=medium
 
   * (master+cs) new charts prepared for mfs 2.0
   * (cs) options for transfering data between disks
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 15 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.14) unstable; urgency=medium
+moosefs (1.7.14) unstable; urgency=medium
 
   * (master) added simple supervisor (allow start masters without manual
     supervisor)
@@ -561,14 +568,14 @@ moosefs-ce (1.7.14) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 08 Jan 2014 12:00:00 +0100
 
-moosefs-ce (1.7.13) unstable; urgency=medium
+moosefs (1.7.13) unstable; urgency=medium
 
   * (cs) added rebalance utilization limit option
   * (cs) added error tolerance options
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 12 Dec 2013 12:00:00 +0100
 
-moosefs-ce (1.7.12) unstable; urgency=medium
+moosefs (1.7.12) unstable; urgency=medium
 
   * (master) fixed metadata synchronization bug (HUP detected to early)
   * (master) fixed metadata synchronization bug (settrashtime,setgoal,seteattr)
@@ -578,7 +585,7 @@ moosefs-ce (1.7.12) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 11 Dec 2013 12:00:00 +0100
 
-moosefs-ce (1.7.11) unstable; urgency=medium
+moosefs (1.7.11) unstable; urgency=medium
 
   * (mount) fixed read/write bug (status EAGAIN on read/write caused EIO)
   * (cli) added user defined separator
@@ -586,14 +593,14 @@ moosefs-ce (1.7.11) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 22 Nov 2013 12:00:00 +0100
 
-moosefs-ce (1.7.10) unstable; urgency=medium
+moosefs (1.7.10) unstable; urgency=medium
 
   * (master) added licences for version pro
   * (mount) fixed very rare race condition (fuse context)
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 21 Nov 2013 12:00:00 +0100
 
-moosefs-ce (1.7.9) unstable; urgency=medium
+moosefs (1.7.9) unstable; urgency=medium
 
   * (master) fixed chunk deletions during chunkserver disconnection
   * (daemons) fixed 'stop' status (ok when daemon is already stopped)
@@ -604,7 +611,7 @@ moosefs-ce (1.7.9) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 12 Nov 2013 12:00:00 +0100
 
-moosefs-ce (1.7.8) unstable; urgency=medium
+moosefs (1.7.8) unstable; urgency=medium
 
   * (master) new 'open files' module (also fixed some bugs)
   * (master) better management of chunks deletion in master
@@ -614,7 +621,7 @@ moosefs-ce (1.7.8) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 05 Nov 2013 12:00:00 +0100
 
-moosefs-ce (1.7.7) unstable; urgency=medium
+moosefs (1.7.7) unstable; urgency=medium
 
   * (master+cs) added ability to change leader on demand
   * (mount) fixed couple of small bugs in new "read data" module
@@ -625,13 +632,13 @@ moosefs-ce (1.7.7) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 22 Oct 2013 13:00:00 +0200
 
-moosefs-ce (1.7.6) unstable; urgency=medium
+moosefs (1.7.6) unstable; urgency=medium
 
   * (master) imporoved chunk hashmap
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 20 Sep 2013 13:00:00 +0200
 
-moosefs-ce (1.7.5) unstable; urgency=medium
+moosefs (1.7.5) unstable; urgency=medium
 
   * (master) fixed network timeouts for data transfer
   * (master) changed hashmaps
@@ -639,7 +646,7 @@ moosefs-ce (1.7.5) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 12 Sep 2013 13:00:00 +0200
 
-moosefs-ce (1.7.4) unstable; urgency=medium
+moosefs (1.7.4) unstable; urgency=medium
 
   * (mount) read procedures have been rewritten (with read ahead support)
   * (mount) read+write dynamic number of workers
@@ -653,7 +660,7 @@ moosefs-ce (1.7.4) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 14 Aug 2013 13:00:00 +0200
 
-moosefs-ce (1.7.3) unstable; urgency=medium
+moosefs (1.7.3) unstable; urgency=medium
 
   * (man) automatically set release date and version
   * (cgiserv) fixed lock-file issue (early truncate - introduced in 1.7.1)
@@ -668,7 +675,7 @@ moosefs-ce (1.7.3) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 30 Jul 2013 13:00:00 +0200
 
-moosefs-ce (1.7.2) unstable; urgency=medium
+moosefs (1.7.2) unstable; urgency=medium
 
   * (cgi+cli) fixed recognition of using wrong DNS name
   * (cgi+cli) fixed commands bug in cli mode
@@ -677,7 +684,7 @@ moosefs-ce (1.7.2) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 12 Jul 2013 13:00:00 +0200
 
-moosefs-ce (1.7.1) unstable; urgency=medium
+moosefs (1.7.1) unstable; urgency=medium
 
   * (cgi+cli) simple support for master-ha
   * (cgi+cli) fixed path bug introduced in 1.7.0
@@ -688,7 +695,7 @@ moosefs-ce (1.7.1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 11 Jul 2013 13:00:00 +0200
 
-moosefs-ce (1.7.0) unstable; urgency=medium
+moosefs (1.7.0) unstable; urgency=medium
 
   * (cgi+cli) mfs.cgi can be used also in CLI mode (for monitoring scripts
     etc.)
@@ -729,7 +736,7 @@ moosefs-ce (1.7.0) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 05 Jul 2013 13:00:00 +0200
 
-moosefs-ce (1.6.27) unstable; urgency=medium
+moosefs (1.6.27) unstable; urgency=medium
 
   * (metarestore) fixed bug - freeing filenames memory too early
   * (all) added initial support for extra attributes (xattr), which will be
@@ -767,7 +774,7 @@ moosefs-ce (1.6.27) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 09 Aug 2012 13:00:00 +0200
 
-moosefs-ce (1.6.26) unstable; urgency=medium
+moosefs (1.6.26) unstable; urgency=medium
 
   * (all) fixed signal handling in multithreaded modules
   * (master) added goal and trashtime limits to mfsexport.cfg
@@ -783,7 +790,7 @@ moosefs-ce (1.6.26) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 01 Feb 2012 12:00:00 +0100
 
-moosefs-ce (1.6.25) unstable; urgency=medium
+moosefs (1.6.25) unstable; urgency=medium
 
   * (metadump) fixed dumping big files (>2TiB)
   * (metarestore) fixed bug: nonexisting changelog file caused segv
@@ -797,14 +804,14 @@ moosefs-ce (1.6.25) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 30 Dec 2011 12:00:00 +0100
 
-moosefs-ce (1.6.24) unstable; urgency=medium
+moosefs (1.6.24) unstable; urgency=medium
 
   * (master+mount) proxy in mount for mfstools (fixes problems with frequent
     connect to master)
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 06 Dec 2011 12:00:00 +0100
 
-moosefs-ce (1.6.23) unstable; urgency=medium
+moosefs (1.6.23) unstable; urgency=medium
 
   * (master+mount) removed directory cache (didn't increase performance as
     expected and caused many troubles)
@@ -823,7 +830,7 @@ moosefs-ce (1.6.23) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 08 Nov 2011 12:00:00 +0100
 
-moosefs-ce (1.6.22) unstable; urgency=medium
+moosefs (1.6.22) unstable; urgency=medium
 
   * (mount) added resolving master hostname whenever connection has failed
   * (cs) removed getting attributes of every chunk during initialization -
@@ -839,7 +846,7 @@ moosefs-ce (1.6.22) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 09 May 2011 13:00:00 +0200
 
-moosefs-ce (1.6.21) unstable; urgency=medium
+moosefs (1.6.21) unstable; urgency=medium
 
   * (mount) added support of default config file (mfsmount.cfg)
   * (metarestore) fixed snapshot bug
@@ -859,7 +866,7 @@ moosefs-ce (1.6.21) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 14 Apr 2011 13:00:00 +0200
 
-moosefs-ce (1.6.20) unstable; urgency=medium
+moosefs (1.6.20) unstable; urgency=medium
 
   * (cs) fixed "packet too big" issue during register to master (split big
     register packet with all chunks info into small packets)
@@ -868,7 +875,7 @@ moosefs-ce (1.6.20) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 14 Jan 2011 12:00:00 +0100
 
-moosefs-ce (1.6.19) unstable; urgency=medium
+moosefs (1.6.19) unstable; urgency=medium
 
   * (debian) separated mfs-common and mfs-metalogger subpackages, added init
     scripts (contributed by Christopher Lewis)
@@ -888,7 +895,7 @@ moosefs-ce (1.6.19) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 15 Dec 2010 12:00:00 +0100
 
-moosefs-ce (1.6.18) unstable; urgency=medium
+moosefs (1.6.18) unstable; urgency=medium
 
   * (metalogger) added sending metadata after metalogger startup
   * (master,metalogger) added sending two change logs together with metadata
@@ -908,14 +915,14 @@ moosefs-ce (1.6.18) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 08 Nov 2010 12:00:00 +0100
 
-moosefs-ce (1.6.17) unstable; urgency=medium
+moosefs (1.6.17) unstable; urgency=medium
 
   * (master,tools) added automatic data cache management
   * (master,tools) new flag "nodatacache"
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 20 Jul 2010 13:00:00 +0200
 
-moosefs-ce (1.6.16) unstable; urgency=medium
+moosefs (1.6.16) unstable; urgency=medium
 
   * (master) added clearing suid/sgid bits
   * (master) added check for "sticky" flag during rename and unlink operations
@@ -935,7 +942,7 @@ moosefs-ce (1.6.16) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 19 Jul 2010 13:00:00 +0200
 
-moosefs-ce (1.6.15) unstable; urgency=medium
+moosefs (1.6.15) unstable; urgency=medium
 
   * (daemons) fixed "double free" error
   * (metarestore) fixed bugs in "REPAIR" and "SNAPSHOT" entries
@@ -947,7 +954,7 @@ moosefs-ce (1.6.15) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 09 Apr 2010 13:00:00 +0200
 
-moosefs-ce (1.6.14) unstable; urgency=medium
+moosefs (1.6.14) unstable; urgency=medium
 
   * (all) improved messages
   * (cs) prevent from using localhost as a master IP address
@@ -956,7 +963,7 @@ moosefs-ce (1.6.14) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 19 Mar 2010 12:00:00 +0100
 
-moosefs-ce (1.6.13) unstable; urgency=medium
+moosefs (1.6.13) unstable; urgency=medium
 
   * (master) fixed poll events bug
   * (autotools) added m4 module for posix threads detection
@@ -968,14 +975,14 @@ moosefs-ce (1.6.13) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 08 Feb 2010 12:00:00 +0100
 
-moosefs-ce (1.6.12) unstable; urgency=medium
+moosefs (1.6.12) unstable; urgency=medium
 
   * (mount) fixed locking in read module
   * (mount,cs) added ability to bind outgoing sockets to specific IP
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 25 Jan 2010 12:00:00 +0100
 
-moosefs-ce (1.6.11) unstable; urgency=medium
+moosefs (1.6.11) unstable; urgency=medium
 
   * (cs) removed dirent.d_type test
   * (cs) fixed some memory leaks
@@ -983,7 +990,7 @@ moosefs-ce (1.6.11) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 31 Dec 2009 12:00:00 +0100
 
-moosefs-ce (1.6.10) unstable; urgency=medium
+moosefs (1.6.10) unstable; urgency=medium
 
   * fixed errors introduced in 1.6.9
   * added 'reload' command to master
@@ -993,7 +1000,7 @@ moosefs-ce (1.6.10) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 09 Dec 2009 12:00:00 +0100
 
-moosefs-ce (1.6.9) unstable; urgency=medium
+moosefs (1.6.9) unstable; urgency=medium
 
   * updated manpages
   * added support for mlockall (prevent from swapping)
@@ -1005,33 +1012,33 @@ moosefs-ce (1.6.9) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 24 Nov 2009 12:00:00 +0100
 
-moosefs-ce (1.6.8) unstable; urgency=medium
+moosefs (1.6.8) unstable; urgency=medium
 
   * added options to set nice level and number of I/O retries in mfsmount
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 26 Oct 2009 12:00:00 +0100
 
-moosefs-ce (1.6.7) unstable; urgency=medium
+moosefs (1.6.7) unstable; urgency=medium
 
   * fixed error: damaged disk caused SIGSEGV in mfschunkserver
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 05 Oct 2009 13:00:00 +0200
 
-moosefs-ce (1.6.6) unstable; urgency=medium
+moosefs (1.6.6) unstable; urgency=medium
 
   * fixed errors introduced in 1.6.5
   * changed directory structure in CS (from 16 subfolders to 256 subfolders)
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 02 Oct 2009 13:00:00 +0200
 
-moosefs-ce (1.6.5) unstable; urgency=medium
+moosefs (1.6.5) unstable; urgency=medium
 
   * fixed some performance issues
   * added new module "mfsmetalogger"
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 23 Sep 2009 13:00:00 +0200
 
-moosefs-ce (1.6.4) unstable; urgency=medium
+moosefs (1.6.4) unstable; urgency=medium
 
   * rewrite mfs to use poll instead of select
   * fixed some errors in new write module
@@ -1039,7 +1046,7 @@ moosefs-ce (1.6.4) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 25 Aug 2009 13:00:00 +0200
 
-moosefs-ce (1.6.3) unstable; urgency=medium
+moosefs (1.6.3) unstable; urgency=medium
 
   * reduced version increasing
   * increased open files limit in chunkserver
@@ -1047,14 +1054,14 @@ moosefs-ce (1.6.3) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Mon, 24 Aug 2009 13:00:00 +0200
 
-moosefs-ce (1.6.2) unstable; urgency=medium
+moosefs (1.6.2) unstable; urgency=medium
 
   * fixed "race" in writedata module
   * increased session timeout in mfsmaster for new sessions
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 19 Aug 2009 13:00:00 +0200
 
-moosefs-ce (1.6.1) unstable; urgency=medium
+moosefs (1.6.1) unstable; urgency=medium
 
   * Added 'mapall' option to exports
   * Added flags 'noattrcache' and 'noentrycache'
@@ -1064,7 +1071,7 @@ moosefs-ce (1.6.1) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 14 Aug 2009 13:00:00 +0200
 
-moosefs-ce (1.6.0) unstable; urgency=medium
+moosefs (1.6.0) unstable; urgency=medium
 
   * (all) Removed duplicate source files.
   * (all) Strip whitespace at the end of configuration file lines.
@@ -1111,13 +1118,13 @@ moosefs-ce (1.6.0) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 01 Jul 2009 13:00:00 +0200
 
-moosefs-ce (1.5.12) unstable; urgency=medium
+moosefs (1.5.12) unstable; urgency=medium
 
   * Fixed CRC cache in chunkserver
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 28 Jan 2009 12:00:00 +0100
 
-moosefs-ce (1.5.11) unstable; urgency=medium
+moosefs (1.5.11) unstable; urgency=medium
 
   * Added CRC-block and file descriptor cache in chunkserver.
   * Removed compilation warnings on 64-bit machines.
@@ -1126,13 +1133,13 @@ moosefs-ce (1.5.11) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 18 Dec 2008 12:00:00 +0100
 
-moosefs-ce (1.5.10) unstable; urgency=medium
+moosefs (1.5.10) unstable; urgency=medium
 
   * Fixed replication algorithm.
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 03 Dec 2008 12:00:00 +0100
 
-moosefs-ce (1.5.9) unstable; urgency=medium
+moosefs (1.5.9) unstable; urgency=medium
 
   * Improved rebalancing algorithm.
   * Protections against overriding metadata.mfs.back by older metadata.mfs.
@@ -1143,32 +1150,32 @@ moosefs-ce (1.5.9) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Wed, 19 Nov 2008 12:00:00 +0100
 
-moosefs-ce (1.5.8) unstable; urgency=medium
+moosefs (1.5.8) unstable; urgency=medium
 
   * Better memory allocation in Master's chunks module.
   * Syslog messages used only for debugging purposes were commented out.
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 26 Aug 2008 13:00:00 +0200
 
-moosefs-ce (1.5.7) unstable; urgency=medium
+moosefs (1.5.7) unstable; urgency=medium
 
   * Fix for stack buffer overrun (by 4 bytes) in mfsmount.
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 01 Aug 2008 13:00:00 +0200
 
-moosefs-ce (1.5.6) unstable; urgency=medium
+moosefs (1.5.6) unstable; urgency=medium
 
   * Memory allocation fix in mfsmaster.
 
  -- MooseFS Team <contact@moosefs.com>  Fri, 25 Jul 2008 13:00:00 +0200
 
-moosefs-ce (1.5.5) unstable; urgency=medium
+moosefs (1.5.5) unstable; urgency=medium
 
   * Mounting options fix for FreeBSD in mfsmount.
 
  -- MooseFS Team <contact@moosefs.com>  Thu, 10 Jul 2008 13:00:00 +0200
 
-moosefs-ce (1.5.4) unstable; urgency=medium
+moosefs (1.5.4) unstable; urgency=medium
 
   * Blocking rebalance replications when undergoal chunks exist.
   * Minor bugfixes.
@@ -1177,7 +1184,7 @@ moosefs-ce (1.5.4) unstable; urgency=medium
 
  -- MooseFS Team <contact@moosefs.com>  Tue, 08 Jul 2008 13:00:00 +0200
 
-moosefs-ce (1.5) unstable; urgency=medium
+moosefs (1.5) unstable; urgency=medium
 
   * First version released as Open Source.
 

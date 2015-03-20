@@ -25,27 +25,23 @@ if [ ! \( -f "$DISTFILEBASE" -o -d "$DISTFILEBASE" \) ]; then
 fi
 FILEBASEDIR=`dirname "$0"`
 
-PORTNAMES="common master chunkserver client metalogger cgi cgiserv cli netdump"
+PORTNAMES="master chunkserver client metalogger cgi cgiserv cli netdump"
 
 PORTFILES="Makefile pkg-descr pkg-plist files"
 
-VERSION=2.0.54
+VERSION=2.0.60
 RELEASE=1
 
 if [ -f "$DISTFILEBASE" ]; then
 	SHA256=`sha256 "${DISTFILEBASE}" | cut -d' ' -f4`
 	SIZE=`stat -f %z "${DISTFILEBASE}"`
 else
-	SHA256=`sha256 "${DISTFILEBASE}/moosefs-ce-${VERSION}-${RELEASE}.tar.gz" | cut -d' ' -f4`
-	SIZE=`stat -f %z "${DISTFILEBASE}/moosefs-ce-${VERSION}-${RELEASE}.tar.gz"`
+	SHA256=`sha256 "${DISTFILEBASE}/moosefs-${VERSION}-${RELEASE}.tar.gz" | cut -d' ' -f4`
+	SIZE=`stat -f %z "${DISTFILEBASE}/moosefs-${VERSION}-${RELEASE}.tar.gz"`
 fi
 
 for portname in ${PORTNAMES}; do
-	if [ "$portname" == "common" ]; then
-		portdir="${PORTBASE}/moosefs-${portname}"
-	else
-		portdir="${PORTBASE}/moosefs-ce-${portname}"
-	fi
+	portdir="${PORTBASE}/moosefs-${portname}"
 	if [ -d "$portdir" ]; then
 		rm -rf "$portdir"
 	fi
@@ -60,7 +56,7 @@ for portname in ${PORTNAMES}; do
 	done
 	cat "${FILEBASEDIR}/files/bsd.port.moosefs.mk" | sed "s/^PORTVERSION=.*$/PORTVERSION=	${VERSION}/" > "${portdir}/bsd.port.moosefs.mk"
 	(
-		echo "SHA256 (moosefs-ce-${VERSION}-${RELEASE}.tar.gz) = $SHA256"
-		echo "SIZE (moosefs-ce-${VERSION}-${RELEASE}.tar.gz) = $SIZE"
+		echo "SHA256 (moosefs-${VERSION}-${RELEASE}.tar.gz) = $SHA256"
+		echo "SIZE (moosefs-${VERSION}-${RELEASE}.tar.gz) = $SIZE"
 	) > "${portdir}/distinfo"
 done

@@ -1,5 +1,10 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.60-1 (2015-03-18)
+
+  - (all) changed license of standard version to GPLv2
+  - (all) changed name moosefs-ce to just moosefs
+
 * MooseFS 2.0.54-1 (2015-03-11)
 
   - (mount) fixed network timeouts in master-mount connection module.

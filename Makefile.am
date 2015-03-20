@@ -49,7 +49,7 @@ endif
 
 RELEASE = @release@
 
-ACLOCAL_AMFLAGS = -I m4 $(shell test -d /opt/local/share/aclocal && echo -I/opt/local/share/aclocal)
+ACLOCAL_AMFLAGS = -I m4
 
 SUBDIRS=mfstests mfsdata mfsmanpages $(MASTERDIR) $(METALOGGERDIR) $(SUPERVISORDIR) $(CHUNKSERVERDIR) $(MOUNTDIR) $(SCRIPTSDIR) $(NETDUMPDIR) $(SYSTEMDDIR)
 

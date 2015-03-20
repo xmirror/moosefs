@@ -1,4 +1,4 @@
-Source: moosefs-ce
+Source: moosefs
 Section: admin
 Priority: extra
 Maintainer: MooseFS Team <contact@moosefs.com>
@@ -6,62 +6,56 @@ Build-Depends: debhelper (>= 7.0.15), autotools-dev, libc6-dev, libfuse-dev, pkg
 Standards-Version: 3.7.3
 Homepage: http://moosefs.com/
 
-Package: moosefs-ce-common
+Package: moosefs-master
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: MooseFS common files
- Files and services common for all MooseFS daemons.
-
-Package: moosefs-ce-master
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, moosefs-ce-common
 Description: MooseFS master server
  MooseFS master (metadata) server.
 
-Package: moosefs-ce-metalogger
+Package: moosefs-metalogger
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, moosefs-ce-common
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: MooseFS metalogger server
  MooseFS metalogger (metadata replication) server.
 
 
-Package: moosefs-ce-chunkserver
+Package: moosefs-chunkserver
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, moosefs-ce-common
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: MooseFS data server
  MooseFS data server.
 
-Package: moosefs-ce-client
+Package: moosefs-client
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: MooseFS client
  MooseFS clients: mfsmount and mfstools.
 
-Package: moosefs-ce-cli
+Package: moosefs-cli
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, python (>= 2.5)
 Description: MooseFS CLI Utility
  MooseFS CLI utilities.
 
-Package: moosefs-ce-cgi
+Package: moosefs-cgi
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, python (>= 2.5)
 Description: MooseFS CGI Monitor
  MooseFS CGI monitor.
 
-Package: moosefs-ce-cgiserv
+Package: moosefs-cgiserv
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, moosefs-ce-cgi
+Depends: ${shlibs:Depends}, ${misc:Depends}, moosefs-cgi
 Description: Simple CGI-capable HTTP server to run MooseFS CGI Monitor
  Simple CGI-capable HTTP server to run MooseFS CGI monitor.
 
-Package: moosefs-ce-netdump
+Package: moosefs-netdump
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: MooseFS network packet dump utility
  MooseFS network packet dump utility
 
-Package: moosefs-ce-dbg
+Package: moosefs-dbg
 Architecture: any
 Section: debug
 Priority: extra

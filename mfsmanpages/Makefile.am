@@ -1,4 +1,3 @@
-general_mans=moosefs.7 mfs.7
 chunkserver_mans=mfschunkserver.8 mfschunkserver.cfg.5 mfshdd.cfg.5
 master_mans=mfsmaster.8 mfsmetarestore.8 mfsmaster.cfg.5 mfsexports.cfg.5 mfstopology.cfg.5
 cgiserv_mans=mfscgiserv.8
@@ -13,15 +12,11 @@ mount_mans=\
 	mfsgetquota.1 mfssetquota.1 mfsdelquota.1 \
 	mfsappendchunks.1 mfsmakesnapshot.1 mfsfilepaths.1
 
-all_mans=$(general_mans) $(chunkserver_mans) $(master_mans) $(mount_mans) $(metalogger_mans) $(cgiserv_mans) $(netdump_mans) 
+all_mans=$(chunkserver_mans) $(master_mans) $(mount_mans) $(metalogger_mans) $(cgiserv_mans) $(netdump_mans) 
 
 EXTRA_DIST=$(all_mans)
 
 man_MANS=
-
-if INSTALL_GENERAL_MANS
-man_MANS+=$(general_mans)
-endif
 
 if BUILD_MASTER
 man_MANS+=$(master_mans)

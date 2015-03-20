@@ -114,7 +114,7 @@ binary-common:
 	dh_installinit
 	dh_installman
 	dh_link
-	dh_strip --dbg-package=moosefs-ce-dbg
+	dh_strip --dbg-package=moosefs-dbg
 	dh_compress
 	dh_fixperms
 #	dh_makeshlibs

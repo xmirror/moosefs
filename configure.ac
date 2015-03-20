@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.60)
-AC_INIT([MFS], [2.0.54], [bugs@moosefs.com], [moosefs-ce])
+AC_INIT([MFS], [2.0.60], [bugs@moosefs.com], [moosefs])
 release=1
 
 dnl AC_CONFIG_SRCDIR([MFSCommunication.h])
@@ -10,6 +10,7 @@ AC_CONFIG_HEADER([config.h])
 AC_CANONICAL_TARGET
 AM_INIT_AUTOMAKE([1.14 foreign subdir-objects])
 AM_SILENT_RULES([yes])
+AC_CONFIG_MACRO_DIRS([m4])
 
 versmaj=$(echo $PACKAGE_VERSION | cut -d. -f1)
 versmid=$(echo $PACKAGE_VERSION | cut -d. -f2)
@@ -22,7 +23,7 @@ AC_DEFINE_UNQUOTED([VERSHEX], [(($versmaj)*0x10000+($versmid)*0x100+($versmin)*2
 #AC_DEFINE_UNQUOTED([VERSHEX], [(($versmaj)*0x10000+($versmid)*0x100+($versmin))], [Full MFS version as a hex number])
 AC_DEFINE_UNQUOTED([RELEASE], [$release], [Release number])
 AC_DEFINE_UNQUOTED([VERSION2INT(maj,med,min)], [((maj)*0x10000+(med)*0x100+(((maj)>1)?((min)*2):(min)))], [Version converter from human readable format to binary format used in MFS packets])
-AC_DEFINE_UNQUOTED([VERSSTR], ["${PACKAGE_VERSION}-${release}-ce"], [MFS version - string])
+AC_DEFINE_UNQUOTED([VERSSTR], ["${PACKAGE_VERSION}-${release}"], [MFS version - string])
 
 # Checks for programs.
 AC_PROG_CC(myclang clang llvm-gcc gcc)
@@ -342,8 +343,6 @@ AC_ARG_WITH([systemdsystemunitdir],
 	[AS_HELP_STRING([--with-systemdsystemunitdir=PATH], [Path to install systemd units (no=omit)])],
 	[systemdunitdir=$withval])
 
-AM_CONDITIONAL([INSTALL_GENERAL_MANS], [test "$enable_generalmans" != "no"])
-
 AM_CONDITIONAL([WITH_SYSTEMD], [test "$systemdunitdir" != "no"])
 
 if test "$enable_mfscgi" != "no" -o "$enable_mfscli" != "no"; then
@@ -547,9 +546,9 @@ AC_CONFIG_FILES([Makefile
 		mfsdata/mfsmaster.cfg
 		mfsdata/mfsmetalogger.cfg
 		mfsdata/mfsmount.cfg
-		systemd/moosefs-ce-cgiserv.service
-		systemd/moosefs-ce-chunkserver.service
-		systemd/moosefs-ce-master.service
-		systemd/moosefs-ce-metalogger.service
+		systemd/moosefs-cgiserv.service
+		systemd/moosefs-chunkserver.service
+		systemd/moosefs-master.service
+		systemd/moosefs-metalogger.service
 ])
 AC_OUTPUT

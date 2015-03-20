@@ -19,8 +19,8 @@
 %define _username	mfs
 
 Summary:	MooseFS - distributed, fault tolerant file system
-Name:		moosefs-ce
-Version:	2.0.54
+Name:		moosefs
+Version:	2.0.60
 Release:	1%{?_relname}
 License:	commercial
 Group:		System Environment/Daemons
@@ -264,8 +264,6 @@ exit 0
 %{_mandir}/man5/mfsexports.cfg.5*
 %{_mandir}/man5/mfstopology.cfg.5*
 %{_mandir}/man5/mfsmaster.cfg.5*
-%{_mandir}/man7/mfs.7*
-%{_mandir}/man7/moosefs.7*
 %{_mandir}/man8/mfsmaster.8*
 %{_mandir}/man8/mfsmetarestore.8*
 %{mfsconfdir}/mfsexports.cfg.dist
@@ -274,10 +272,10 @@ exit 0
 %dir %{_localstatedir}/mfs
 %{_localstatedir}/mfs/metadata.mfs.empty
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/moosefs-ce-master
+%attr(754,root,root) %{_initrddir}/moosefs-master
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/moosefs-ce-master.service
+%{systemdunitdir}/moosefs-master.service
 %endif
 
 
@@ -292,10 +290,10 @@ exit 0
 %{mfsconfdir}/mfsmetalogger.cfg.dist
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/moosefs-ce-metalogger
+%attr(754,root,root) %{_initrddir}/moosefs-metalogger
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/moosefs-ce-metalogger.service
+%{systemdunitdir}/moosefs-metalogger.service
 %endif
 
 
@@ -313,10 +311,10 @@ exit 0
 %{mfsconfdir}/mfshdd.cfg.dist
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/moosefs-ce-chunkserver
+%attr(754,root,root) %{_initrddir}/moosefs-chunkserver
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/moosefs-ce-chunkserver.service
+%{systemdunitdir}/moosefs-chunkserver.service
 %endif
 
 
@@ -371,8 +369,6 @@ exit 0
 %{_mandir}/man1/mfsdelquota.1*
 %{_mandir}/man1/mfsfilepaths.1*
 %{_mandir}/man1/mfstools.1*
-%{_mandir}/man7/mfs.7*
-%{_mandir}/man7/moosefs.7*
 %{_mandir}/man8/mfsmount.8*
 %{mfsconfdir}/mfsmount.cfg.dist
 
@@ -409,10 +405,10 @@ exit 0
 %{_mandir}/man8/mfscgiserv.8*
 %dir %{_localstatedir}/mfs
 %if %{_with_sysv}
-%attr(754,root,root) %{_initrddir}/moosefs-ce-cgiserv
+%attr(754,root,root) %{_initrddir}/moosefs-cgiserv
 %endif
 %if %{_with_systemd}
-%{systemdunitdir}/moosefs-ce-cgiserv.service
+%{systemdunitdir}/moosefs-cgiserv.service
 %endif
 
 
