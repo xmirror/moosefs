@@ -2366,6 +2366,7 @@ void matoclserv_fuse_rmdir(matoclserventry *eptr,const uint8_t *data,uint32_t le
 			gid[i] = get32bit(&data);
 		}
 	}
+	sessions_ugid_remap(eptr->sesdata,&uid,gid);
 	status = fs_rmdir(sessions_get_rootinode(eptr->sesdata),sessions_get_sesflags(eptr->sesdata),inode,nleng,name,uid,gids,gid);
 	ptr = matoclserv_createpacket(eptr,MATOCL_FUSE_RMDIR,5);
 	put32bit(&ptr,msgid);

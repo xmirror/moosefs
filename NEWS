@@ -1,5 +1,10 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.45-1 (2014-12-24)
+
+  - (mount) fixed printed informations about mapall (thanks to Tom Ivar Helbekkmo)
+  - (master) fixed rmdir mapall/maproot rights check (thanks to Tom Ivar Helbekkmo)
+
 * MooseFS 2.0.44-1 (2014-11-27)
 
   - (master) fixed read rebalance limit

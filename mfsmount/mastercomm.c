@@ -1094,7 +1094,7 @@ int fs_connect(uint8_t oninit,struct connect_args_t *cargs) {
 	if (!cargs->meta) {
 		rootuid = get32bit(&rptr);
 		rootgid = get32bit(&rptr);
-		if (i==21) {
+		if (i>=21) {
 			mapalluid = get32bit(&rptr);
 			mapallgid = get32bit(&rptr);
 		} else {
