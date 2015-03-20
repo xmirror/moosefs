@@ -36,6 +36,11 @@ static inline char dispchar(uint8_t c) {
 	return (c>=32 && c<=126)?c:'.';
 }
 
+static inline void makestrip(char strip[16],uint32_t ip) {
+	snprintf(strip,16,"%03"PRIu8".%03"PRIu8".%03"PRIu8".%03"PRIu8,(uint8_t)(ip>>24),(uint8_t)(ip>>16),(uint8_t)(ip>>8),(uint8_t)ip);
+	strip[15]=0;
+}
+
 void print_name(FILE *in,uint32_t nleng) {
 	uint8_t buff[1024];
 	uint32_t x,y,i;
@@ -611,6 +616,7 @@ int sessions_load(FILE *fd,uint8_t mver) {
 	uint32_t i,nextsessionid,sessionid;
 	uint32_t ileng,peerip,rootinode,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected;
 	uint8_t sesflags,mingoal,maxgoal;
+	char strip[16];
 
 	if (mver<=0x11) {
 		if (fread(hdr,1,8,fd)!=8) {
@@ -676,11 +682,12 @@ int sessions_load(FILE *fd,uint8_t mver) {
 		rootgid = get32bit(&ptr);
 		mapalluid = get32bit(&ptr);
 		mapallgid = get32bit(&ptr);
+		makestrip(strip,peerip);
 		if (mver>=0x11) {
 			disconnected = get32bit(&ptr);
-			printf("M|s:%10"PRIu32"|p:%08"PRIX32"|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|d:%10"PRIu32"|c:",sessionid,peerip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected);
+			printf("M|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|d:%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected);
 		} else {
-			printf("M|s:%10"PRIu32"|p:%08"PRIX32"|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|c:",sessionid,peerip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid);
+			printf("M|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid);
 		}
 		for (i=0 ; i<statsinfile ; i++) {
 			printf("%c%"PRIu32,(i==0)?'[':',',get32bit(&ptr));
@@ -704,6 +711,7 @@ int csdb_load(FILE *fd,uint8_t mver) {
 	uint16_t csid;
 	uint8_t maintenance;
 	size_t bsize;
+	char strip[16];
 
 	if (mver<=0x10) {
 		bsize = 6;
@@ -728,18 +736,21 @@ int csdb_load(FILE *fd,uint8_t mver) {
 		if (mver<=0x10) {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
-			printf("Z|i:%10"PRIu32"|p:%5"PRIu16"\n",ip,port);
+			makestrip(strip,ip);
+			printf("Z|i:%s|p:%5"PRIu16"\n",strip,port);
 		} else if (mver<=0x11) {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
 			csid = get16bit(&ptr);
-			printf("Z|i:%10"PRIu32"|p:%5"PRIu16"|#:%5"PRIu16"\n",ip,port,csid);
+			makestrip(strip,ip);
+			printf("Z|i:%s|p:%5"PRIu16"|#:%5"PRIu16"\n",strip,port,csid);
 		} else {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
 			csid = get16bit(&ptr);
 			maintenance = get8bit(&ptr);
-			printf("Z|i:%10"PRIu32"|p:%5"PRIu16"|#:%5"PRIu16"|m:%u\n",ip,port,csid,(maintenance)?1:0);
+			makestrip(strip,ip);
+			printf("Z|i:%s|p:%5"PRIu16"|#:%5"PRIu16"|m:%u\n",strip,port,csid,(maintenance)?1:0);
 		}
 		t--;
 	}

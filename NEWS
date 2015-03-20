@@ -1,5 +1,15 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.42-1 (2014-10-29)
+
+  - (tools) fixed printing ip numbers in mfsfileinfo
+  - (mount) changed format of ip numbers in messages from hex to standard
+  - (master) changed format of ip numbers in some messages from hex to standard
+
+* MooseFS 2.0.41-1 (2014-10-21)
+
+  - (mount) fixed buffer overrun (FreeBSD and OS X only)
+
 * MooseFS 2.0.40-1 (2014-10-15)
 
   - (cs) fixed serious bug (new chunks were created on disks 'marked for removal') - introduced in 1.7.31

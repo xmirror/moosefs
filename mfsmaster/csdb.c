@@ -94,10 +94,18 @@ void csdb_delid(uint16_t csid) {
 	}
 }
 
+static inline void csdb_makestrip(char strip[16],uint32_t ip) {
+	snprintf(strip,16,"%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,(uint8_t)(ip>>24),(uint8_t)(ip>>16),(uint8_t)(ip>>8),(uint8_t)ip);
+	strip[15]=0;
+}
+
 void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 	uint32_t hash,hashid;
 	csdbentry *csptr,**cspptr,*csidptr;
+	char strip[16];
+	char strtmpip[16];
 
+	csdb_makestrip(strip,ip);
 	if (csid>0) {
 		csidptr = csdbtab[csid];
 	} else {
@@ -105,7 +113,7 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 	}
 	if (csidptr && csidptr->ip == ip && csidptr->port == port) { // fast find using csid
 		if (csidptr->eptr!=NULL) {
-			syslog(LOG_NOTICE,"csdb: found cs using ip:port and csid (%08"PRIX32":%"PRIu16",%"PRIu16"), but server is still connected",ip,port,csid);
+			syslog(LOG_NOTICE,"csdb: found cs using ip:port and csid (%s:%"PRIu16",%"PRIu16"), but server is still connected",strip,port,csid);
 			return NULL;
 		}
 		csidptr->eptr = eptr;
@@ -113,14 +121,14 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 		if (csidptr->maintenance) {
 			disconnected_servers_in_maintenance--;
 		}
-		syslog(LOG_NOTICE,"csdb: found cs using ip:port and csid (%08"PRIX32":%"PRIu16",%"PRIu16")",ip,port,csid);
+		syslog(LOG_NOTICE,"csdb: found cs using ip:port and csid (%s:%"PRIu16",%"PRIu16")",strip,port,csid);
 		return csidptr;
 	}
 	hash = CSDBHASHFN(ip,port);
 	for (csptr = csdbhash[hash] ; csptr ; csptr = csptr->next) { // slow find using (ip+port)
 		if (csptr->ip == ip && csptr->port == port) {
 			if (csptr->eptr!=NULL) {
-				syslog(LOG_NOTICE,"csdb: found cs using ip:port (%08"PRIX32":%"PRIu16",%"PRIu16"), but server is still connected",ip,port,csid);
+				syslog(LOG_NOTICE,"csdb: found cs using ip:port (%s:%"PRIu16",%"PRIu16"), but server is still connected",strip,port,csid);
 					return NULL;
 			}
 			csptr->eptr = eptr;
@@ -132,7 +140,8 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 		}
 	}
 	if (csidptr && csidptr->eptr==NULL) { // ip+port not found, but found csid - change ip+port
-		syslog(LOG_NOTICE,"csdb: found cs using csid (%08"PRIX32":%"PRIu16",%"PRIu16") - previous ip:port (%08"PRIX32":%"PRIu16")",ip,port,csid,csidptr->ip,csidptr->port);
+		csdb_makestrip(strtmpip,csidptr->ip);
+			syslog(LOG_NOTICE,"csdb: found cs using csid (%s:%"PRIu16",%"PRIu16") - previous ip:port (%s:%"PRIu16")",strip,port,csid,strtmpip,csidptr->port);
 			hashid = CSDBHASHFN(csidptr->ip,csidptr->port);
 			cspptr = csdbhash + hashid;
 			while ((csptr=*cspptr)) {
@@ -155,7 +164,7 @@ void* csdb_new_connection(uint32_t ip,uint16_t port,uint16_t csid,void *eptr) {
 		}
 		return csidptr;
 	}
-	syslog(LOG_NOTICE,"csdb: server not found (%08"PRIX32":%"PRIu16",%"PRIu16"), add it to database",ip,port,csid);
+	syslog(LOG_NOTICE,"csdb: server not found (%s:%"PRIu16",%"PRIu16"), add it to database",strip,port,csid);
 	csptr = malloc(sizeof(csdbentry));
 	passert(csptr);
 	csptr->ip = ip;
@@ -194,8 +203,9 @@ void csdb_lost_connection(void *v_csptr) {
 void csdb_server_load(void *v_csptr,uint32_t load) {
 	csdbentry *csptr = (csdbentry*)v_csptr;
 	double loadavg;
+	char strip[16];
 	loadsum -= csptr->load;
-	if (servers>2) {
+	if (servers>1) {
 		loadavg = loadsum / (servers-1);
 	} else {
 		loadavg = load;
@@ -203,7 +213,8 @@ void csdb_server_load(void *v_csptr,uint32_t load) {
 	csptr->load = load;
 	loadsum += load;
 	if (load>HeavyLoadThreshold && load>loadavg*HeavyLoadRatioThreshold) { // cs is in 'heavy load state'
-		syslog(LOG_NOTICE,"Heavy load server detected (%u.%u.%u.%u:%u); load: %"PRIu32" ; threshold: %"PRIu32" ; loadavg (without this server): %.2lf ; ratio_threshold: %.2lf",(csptr->ip>>24)&0xFF,(csptr->ip>>16)&0xFF,(csptr->ip>>8)&0xFF,csptr->ip&0xFF,csptr->port,csptr->load,HeavyLoadThreshold,loadavg,HeavyLoadRatioThreshold);
+		csdb_makestrip(strip,csptr->ip);
+		syslog(LOG_NOTICE,"Heavy load server detected (%s:%u); load: %"PRIu32" ; threshold: %"PRIu32" ; loadavg (without this server): %.2lf ; ratio_threshold: %.2lf",strip,csptr->port,csptr->load,HeavyLoadThreshold,loadavg,HeavyLoadRatioThreshold);
 		csptr->heavyloadts = main_time();
 	}
 }
@@ -211,11 +222,13 @@ void csdb_server_load(void *v_csptr,uint32_t load) {
 
 uint16_t csdb_get_csid(void *v_csptr) {
 	csdbentry *csptr = (csdbentry*)v_csptr;
+	char strip[16];
 	if (csptr->csid==0) {
 		csptr->csid = csdb_newid();
 		csdbtab[csptr->csid] = csptr;
 		changelog("%"PRIu32"|CSDBOP(%u,%"PRIu32",%"PRIu16",%"PRIu16")",main_time(),CSDB_OP_NEWID,csptr->ip,csptr->port,csptr->csid);
-		syslog(LOG_NOTICE,"csdb: generate new server id for (%08"PRIX32":%"PRIu16"): %"PRIu16,csptr->ip,csptr->port,csptr->csid);
+		csdb_makestrip(strip,csptr->ip);
+		syslog(LOG_NOTICE,"csdb: generate new server id for (%s:%"PRIu16"): %"PRIu16,strip,csptr->port,csptr->csid);
 	}
 	return csptr->csid;
 }

@@ -177,7 +177,7 @@ uint32_t get_groups(pid_t pid,gid_t gid,uint32_t **gidtab) {
 				gids++;
 			}
 		}
-		*gidtab = malloc(sizeof(uint32_t)*gcount);
+		*gidtab = malloc(sizeof(uint32_t)*gids);
 		passert(*gidtab);
 		(*gidtab)[0] = gid;
 		gids = 1;
@@ -196,7 +196,7 @@ uint32_t get_groups(pid_t pid,gid_t gid,uint32_t **gidtab) {
 				gids++;
 			}
 		}
-		*gidtab = malloc(sizeof(uint32_t)*gcount);
+		*gidtab = malloc(sizeof(uint32_t)*gids);
 		passert(*gidtab);
 		(*gidtab)[0] = gid;
 		gids = 1;

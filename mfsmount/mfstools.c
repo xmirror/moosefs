@@ -1741,7 +1741,7 @@ int file_info(uint8_t fileinfomode,const char *fname) {
 	const uint8_t *rptr;
 	uint32_t indx,cmd,leng,inode,version;
 	uint32_t chunks,copies,copy;
-	char csstrip[13];
+	char csstrip[16];
 	uint32_t csip;
 	uint16_t csport;
 	uint8_t protover;
@@ -1925,7 +1925,8 @@ int file_info(uint8_t fileinfomode,const char *fname) {
 						firstdigest = 1;
 						checksumerror = 0;
 						for (copy=0 ; copy<copies ; copy++) {
-							snprintf(csstrip,13,"%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,rptr[0],rptr[1],rptr[2],rptr[3]);
+							snprintf(csstrip,16,"%"PRIu8".%"PRIu8".%"PRIu8".%"PRIu8,rptr[0],rptr[1],rptr[2],rptr[3]);
+							csstrip[15]=0;
 							csip = get32bit(&rptr);
 							csport = get16bit(&rptr);
 							if (protover) {
