@@ -1,5 +1,9 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.44-1 (2014-11-27)
+
+  - (master) fixed read rebalance limit
+
 * MooseFS 2.0.43-1 (2014-10-31)
 
   - (master) introducing new licence model (new licences with size limit for pro version)

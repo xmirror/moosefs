@@ -2541,7 +2541,7 @@ void chunk_do_jobs(chunk *c,uint16_t scount,double minusage,double maxusage,uint
 			if (max>0) {
 				for (i=0 ; i<max && srccsid==MAXCSCOUNT ; i++) {
 					uint8_t lclass;
-					lclass = (matocsserv_can_create_chunks(cstab[bcsids[i]].ptr,AcceptableDifference*1.5)<2)?2:3;
+					lclass = (matocsserv_can_create_chunks(cstab[bcsids[bservcount-1-i]].ptr,AcceptableDifference*1.5)<2)?2:3;
 					if (matocsserv_replication_read_counter(cstab[bcsids[bservcount-1-i]].ptr,now)<MaxReadRepl[lclass]) {
 						for (s=c->slisthead ; s && s->csid!=bcsids[bservcount-1-i] ; s=s->next ) {}
 						if (s && (s->valid==VALID || s->valid==TDVALID)) {
@@ -2552,7 +2552,7 @@ void chunk_do_jobs(chunk *c,uint16_t scount,double minusage,double maxusage,uint
 			} else {
 				for (i=0 ; i<(bservcount-min) && srccsid==MAXCSCOUNT ; i++) {
 					uint8_t lclass;
-					lclass = (matocsserv_can_create_chunks(cstab[bcsids[i]].ptr,AcceptableDifference*1.5)<2)?2:3;
+					lclass = (matocsserv_can_create_chunks(cstab[bcsids[bservcount-1-i]].ptr,AcceptableDifference*1.5)<2)?2:3;
 					if (matocsserv_replication_read_counter(cstab[bcsids[bservcount-1-i]].ptr,now)<MaxReadRepl[lclass]) {
 						for (s=c->slisthead ; s && s->csid!=bcsids[bservcount-1-i] ; s=s->next ) {}
 						if (s && (s->valid==VALID || s->valid==TDVALID)) {
