@@ -1,22 +1,20 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +55,7 @@ typedef struct _hashbucket {
 static hashbucket *chunklochash = NULL;
 static pthread_mutex_t clcachelock = PTHREAD_MUTEX_INITIALIZER;
 
+/*
 enum {
 	HITS_CORRECT = 0,
 	HITS_WRONG,
@@ -81,10 +80,14 @@ static inline void chunkloc_cache_stats_inc(uint8_t id) {
 		stats_unlock();
 	}
 }
+*/
+
 //static uint32_t stats_hit_correct = 0;
 //static uint32_t stats_hit_wrong = 0;
 //static uint32_t stats_miss = 0;
 
+
+/*
 static inline int chunkloc_compare(const uint8_t *l1,const uint8_t *l2,uint8_t s) {
 	uint8_t mul1,sum1,xor1;
 	uint8_t mul2,sum2,xor2;
@@ -101,6 +104,7 @@ static inline int chunkloc_compare(const uint8_t *l1,const uint8_t *l2,uint8_t s
 	}
 	return (mul1==mul2&&sum1==sum2&&xor1==xor2)?1:0;
 }
+*/
 
 void chunkloc_cache_insert(uint32_t inode,uint32_t pos,uint64_t chunkid,uint32_t chunkversion,uint8_t csdatasize,const uint8_t *csdata) {
 	uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
@@ -119,11 +123,11 @@ void chunkloc_cache_insert(uint32_t inode,uint32_t pos,uint64_t chunkid,uint32_t
 		hb = chunklochash + ((inode*primes[h]+pos*primes[HASH_FUNCTIONS-1-h])%HASH_BUCKETS);
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
 			if (hb->inode[i]==inode && hb->pos[i]==pos) {
-				if (hb->chunkid[i]!=chunkid || hb->chunkversion[i]!=chunkversion || hb->csdatasize[i]!=csdatasize || chunkloc_compare(hb->csdata[i],csdata,csdatasize)==0) {
-					chunkloc_cache_stats_inc(HITS_WRONG);
-				} else {
-					chunkloc_cache_stats_inc(HITS_CORRECT);
-				}
+//				if (hb->chunkid[i]!=chunkid || hb->chunkversion[i]!=chunkversion || hb->csdatasize[i]!=csdatasize || chunkloc_compare(hb->csdata[i],csdata,csdatasize)==0) {
+//					chunkloc_cache_stats_inc(HITS_WRONG);
+//				} else {
+//					chunkloc_cache_stats_inc(HITS_CORRECT);
+//				}
 				if (hb->csdata[i]) {
 					free(hb->csdata[i]);
 				}
@@ -147,7 +151,7 @@ void chunkloc_cache_insert(uint32_t inode,uint32_t pos,uint64_t chunkid,uint32_t
 			}
 		}
 	}
-	chunkloc_cache_stats_inc(MISSES);
+//	chunkloc_cache_stats_inc(MISSES);
 	if (fhb) {	// just sanity check
 		fhb->inode[fi] = inode;
 		fhb->pos[fi] = pos;
@@ -197,7 +201,7 @@ int chunkloc_cache_search(uint32_t inode,uint32_t pos,uint64_t *chunkid,uint32_t
 void chunkloc_cache_init(void) {
 	chunklochash = malloc(sizeof(hashbucket)*HASH_BUCKETS);
 	memset(chunklochash,0,sizeof(hashbucket)*HASH_BUCKETS);
-	chunkloc_cache_statsptr_init();
+//	chunkloc_cache_statsptr_init();
 }
 
 void chunkloc_cache_term(void) {

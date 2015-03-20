@@ -1,22 +1,20 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,6 +51,7 @@ static pthread_cond_t nodata = PTHREAD_COND_INITIALIZER;
 static time_t convts=0;
 static struct tm convtm;
 static pthread_mutex_t timelock = PTHREAD_MUTEX_INITIALIZER;
+//static pthread_mutex_t bufflock = PTHREAD_MUTEX_INITIALIZER;
 
 static inline void oplog_put(uint8_t *buff,uint32_t leng) {
 	uint32_t bpos;
@@ -79,7 +78,7 @@ static inline void oplog_put(uint8_t *buff,uint32_t leng) {
 
 void oplog_printf(const struct fuse_ctx *ctx,const char *format,...) {
 	va_list ap;
-	static char buff[LINELENG];
+	char buff[LINELENG];
 	uint32_t leng;
 	struct timeval tv;
 	struct tm ltime;
@@ -96,6 +95,7 @@ void oplog_printf(const struct fuse_ctx *ctx,const char *format,...) {
 	ltime.tm_sec += leng%60;
 	ltime.tm_min += leng/60;
 	pthread_mutex_unlock(&timelock);
+//	pthread_mutex_lock(&bufflock);
 	leng = snprintf(buff,LINELENG,"%02u.%02u %02u:%02u:%02u.%06u: uid:%u gid:%u pid:%u cmd:",ltime.tm_mon+1,ltime.tm_mday,ltime.tm_hour,ltime.tm_min,ltime.tm_sec,(unsigned)(tv.tv_usec),(unsigned)(ctx->uid),(unsigned)(ctx->gid),(unsigned)(ctx->pid));
 	if (leng<LINELENG) {
 		va_start(ap,format);
@@ -107,6 +107,7 @@ void oplog_printf(const struct fuse_ctx *ctx,const char *format,...) {
 	}
 	buff[leng++]='\n';
 	oplog_put((uint8_t*)buff,leng);
+//	pthread_mutex_unlock(&bufflock);
 }
 
 

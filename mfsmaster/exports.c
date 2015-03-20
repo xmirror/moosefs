@@ -1,22 +1,20 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -74,6 +72,9 @@ char* exports_strsep(char **stringp, const char *delim) {
 	if (s==NULL) {
 		return NULL;
 	}
+	while (*s==' ' || *s=='\t') {
+		s++;
+	}
 	tok = s;
 	while (1) {
 		c = *s++;
@@ -81,11 +82,15 @@ char* exports_strsep(char **stringp, const char *delim) {
 		do {
 			if ((sc=*spanp++)==c) {
 				if (c==0) {
-					s = NULL;
+					*stringp = NULL;
 				} else {
-					s[-1] = 0;
+					*stringp = s;
 				}
-				*stringp = s;
+				s--;
+				while ((s>tok) && (s[-1]==' ' || s[-1]=='\t')) {
+					s--;
+				}
+				*s = 0;
 				return tok;
 			}
 		} while (sc!=0);
@@ -228,7 +233,7 @@ uint8_t exports_check(uint32_t ip,uint32_t version,uint8_t meta,const uint8_t *p
 					f=e;
 				} else if (e->rootuid==0 && f->rootuid!=0) {	// prefer root not restricted to restricted
 					f=e;
-				} else if ((e->sesflags&SESFLAG_CANCHANGEQUOTA)!=0 && (f->sesflags&SESFLAG_CANCHANGEQUOTA)==0) {	// prefer lines with more privileges
+				} else if ((e->sesflags&SESFLAG_ADMIN)!=0 && (f->sesflags&SESFLAG_ADMIN)==0) {	// prefer lines with more privileges
 					f=e;
 				} else if (e->needpassword==1 && f->needpassword==0) {	// prefer lines with passwords
 					f=e;
@@ -283,7 +288,7 @@ void exports_freelist(exports *arec) {
 //  password=password
 //  dynamicip
 //  ignoregid
-//  canchangequota
+//  admin
 //  mingoal=#
 //  maxgoal=#
 //  mintrashtime=[#w][#d][#h][#m][#[s]]
@@ -674,6 +679,13 @@ int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					arec->alldirs = 1;
 				}
 				o=1;
+			} else if (strcmp(p,"admin")==0) {
+				if (arec->meta) {
+					mfs_arg_syslog(LOG_WARNING,"meta option ignored: %s",p);
+				} else {
+					arec->sesflags |= SESFLAG_ADMIN;
+				}
+				o=1;
 			}
 			break;
 		case 'd':
@@ -683,11 +695,11 @@ int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 			}
 			break;
 		case 'c':
-			if (strcmp(p,"canchangequota")==0) {
+			if (strcmp(p,"canchangequota")==0) { // deprecated - use 'admin'
 				if (arec->meta) {
 					mfs_arg_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->sesflags |= SESFLAG_CANCHANGEQUOTA;
+					arec->sesflags |= SESFLAG_ADMIN;
 				}
 				o=1;
 			}
@@ -840,6 +852,9 @@ int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	while (*p==' ' || *p=='\t') {
 		p++;
 	}
+	if (*p==0 || *p=='#') { // empty line or line with comment only
+		return -1;
+	}
 	net = p;
 	while (*p && *p!=' ' && *p!='\t') {
 		p++;
@@ -949,20 +964,18 @@ void exports_loadexports(void) {
 	arec = malloc(sizeof(exports));
 	passert(arec);
 	while (fgets(linebuff,10000,fd)) {
-		if (linebuff[0]!='#') {
-			linebuff[9999]=0;
-			s=strlen(linebuff);
-			while (s>0 && (linebuff[s-1]=='\r' || linebuff[s-1]=='\n' || linebuff[s-1]=='\t' || linebuff[s-1]==' ')) {
-				s--;
-			}
-			if (s>0) {
-				linebuff[s]=0;
-				if (exports_parseline(linebuff,lineno,arec)>=0) {
-					*netail = arec;
-					netail = &(arec->next);
-					arec = malloc(sizeof(exports));
-					passert(arec);
-				}
+		linebuff[9999]=0;
+		s=strlen(linebuff);
+		while (s>0 && (linebuff[s-1]=='\r' || linebuff[s-1]=='\n' || linebuff[s-1]=='\t' || linebuff[s-1]==' ')) {
+			s--;
+		}
+		if (s>0) {
+			linebuff[s]=0;
+			if (exports_parseline(linebuff,lineno,arec)>=0) {
+				*netail = arec;
+				netail = &(arec->next);
+				arec = malloc(sizeof(exports));
+				passert(arec);
 			}
 		}
 		lineno++;
@@ -1020,7 +1033,7 @@ int exports_init(void) {
 		fprintf(stderr,"no exports defined !!!\n");
 		return -1;
 	}
-	main_reloadregister(exports_reload);
-	main_destructregister(exports_term);
+	main_reload_register(exports_reload);
+	main_destruct_register(exports_term);
 	return 0;
 }

@@ -1,0 +1,39 @@
+.TH mfshdd.cfg "5" "October 2014" "MooseFS 2.0.40-1" "This is part of MooseFS"
+.SH NAME
+mfshdd.cfg \- list of MooseFS storage directories for \fBmfschunkserver\fP
+.SH DESCRIPTION
+The file \fBmfshdd.cfg\fP contains list of directories (mountpoints)
+used for MooseFS storage.
+.SH SYNTAX
+.PP
+Syntax is:
+.TP
+[\fI*\fP]\fIPATH\fP [\fISPACE LIMIT\fP]
+.PP
+Lines starting with \fB#\fP character are ignored as comments.
+.PP
+\fI*\fP means this directory (hard drive) is "marked for removal" 
+and all data will be replicated to other hard drives, usually on other chunkservers.
+.PP
+\fIPATH\fP is path to the mounting point of storage directory, usually a single hard drive.
+.PP
+\fISPACE LIMIT\fP is optional space limit, that allows to set one of two values: 
+how much space should be left unused on this device or how much space is to be used on this device.
+Definition format: [0-9]*(.[0-9]*)?([kMGTPE]|[KMGTPE]i)?B?, positive value means 
+how much space to use, negative value means how much space should be left unused.
+
+.SH COPYRIGHT
+Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+
+This file is part of MooseFS.
+
+READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU DO NOT ACQUIRE
+ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+PROPERTY OR OTHER PROPRIETARY RIGHTS.
+.SH "SEE ALSO"
+.BR mfschunkserver (8),
+.BR mfschunkserver.cfg (5)

@@ -1,19 +1,15 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -21,6 +17,10 @@
 #else
 #define HAVE_ZLIB_H 1
 #define HAVE_STRUCT_TM_TM_GMTOFF 1
+#endif
+
+#if defined(_THREAD_SAFE) || defined(_REENTRANT) || defined(_USE_PTHREADS)
+#  define USE_PTHREADS 1
 #endif
 
 #include <time.h>
@@ -35,6 +35,9 @@
 #ifdef HAVE_ZLIB_H
 #include <zlib.h>
 #endif
+#ifdef USE_PTHREADS
+#include <pthread.h>
+#endif
 
 #include "charts.h"
 #include "crc.h"
@@ -44,12 +47,24 @@
 
 #define USE_NET_ORDER 1
 
-#define LENG 950
-#define DATA 100
+#define MAXLENG 4096
+#define MINLENG 100
+#define MAXHEIGHT 1024
+#define MINHEIGHT 100
+
 #define XPOS 43
 #define YPOS 6
-#define XSIZE (LENG+50)
-#define YSIZE (DATA+20)
+#define XADD 50
+#define YADD 20
+#define MAXXSIZE (MAXLENG+XADD)
+#define MAXYSIZE (MAXHEIGHT+YADD)
+
+//#define LENG 950
+//#define DATA 100
+//#define XPOS 43
+//#define YPOS 6
+//#define XSIZE (LENG+50)
+//#define YSIZE (DATA+20)
 //#define LONGRATIO 6
 
 #define SHORTRANGE 0
@@ -78,7 +93,11 @@ static estatdef *estatdefs;
 static uint32_t estatdefscount;
 static char* statsfilename;
 
-typedef uint64_t stat_record[RANGES][LENG];
+#ifdef USE_PTHREADS
+static pthread_mutex_t glock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+typedef uint64_t *stat_record[RANGES];
 
 static stat_record *series;
 static uint32_t pointers[RANGES];
@@ -90,13 +109,12 @@ static uint32_t medhour,medmin;
 static uint32_t lnghalfhour,lngmday,lngmonth,lngyear;
 static uint32_t vlngmday,vlngmonth,vlngyear;
 
-#define RAWSIZE ((1+(((XSIZE)+1)>>1))*(YSIZE))
-#define CBUFFSIZE (((RAWSIZE)*1001)/1000+16)
-
-static uint8_t chart[(XSIZE)*(YSIZE)];
-static uint8_t rawchart[RAWSIZE];
-static uint8_t compbuff[CBUFFSIZE];
-static uint32_t compsize=0;
+static uint8_t *chart;
+static uint8_t *rawchart;
+static uint8_t *compbuff;
+static uint32_t rawchartsize = 0;
+static uint32_t compbuffsize = 0;
+static uint32_t compsize = 0;
 #ifdef HAVE_ZLIB_H
 static z_stream zstr;
 #else
@@ -114,65 +132,101 @@ static uint8_t warning[50] = {
 #define COLOR_AXIS 2
 #define COLOR_AUX 3
 #define COLOR_TEXT 4
-#define COLOR_DATA1 5
-#define COLOR_DATA2 6
-#define COLOR_DATA3 7
-#define COLOR_NODATA 8
+#define COLOR_NODATA 5
+#define COLOR_TEXTBKG 6
+#if VERSMAJ==1
+#define COLOR_DATA1 7
+#define COLOR_DATA2 8
+#define COLOR_DATA3 9
+#endif
+
+#define COLOR_DATA_BEGIN 50
+#define COLOR_DATA_RANGE 50
+
+static uint8_t data_colors[] = {
+	0x04,0xec,0xf1,                                                                                   // DATA1_MIN
+	0x23,0x86,0xb4,                                                                                   // DATA1_MAX
+	0x23,0x86,0xb4,                                                                                   // DATA2_MIN
+	0x15,0x2f,0x5f,                                                                                   // DATA2_MAX
+	0x15,0x2f,0x5f,                                                                                   // DATA3_MIN
+	0x01,0x04,0x2c                                                                                    // DATA3_MAX
+};
+
 
 static uint8_t png_header[] = {
-	137, 80, 78, 71, 13, 10, 26, 10,        // signature
+	137, 80, 78, 71, 13, 10, 26, 10,                                                                  // signature
 
-	0, 0, 0, 13, 'I', 'H', 'D', 'R',        // IHDR chunk
-	((XSIZE)>>24)&0xFF, ((XSIZE)>>16)&0xFF, ((XSIZE)>>8)&0xFF, (XSIZE)&0xFF, // width
-	((YSIZE)>>24)&0xFF, ((YSIZE)>>16)&0xFF, ((YSIZE)>>8)&0xFF, (YSIZE)&0xFF, // height
-	4, 3, 0, 0, 0,                          // 4bits, indexed color mode, default compression, default filters, no interlace
-	'C', 'R', 'C', '#',                     // CRC32 placeholder
+	0, 0, 0, 13, 'I', 'H', 'D', 'R',                                                                  // IHDR chunk
+	0, 0, 0, 0, 0, 0, 0, 0,                                                                           // widht and height (big endian)
+	8, 3, 0, 0, 0,                                                                                    // 8bits, indexed color mode, default compression, default filters, no interlace
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
 
-	0, 0, 0, 0x1B, 'P', 'L', 'T', 'E',      // PLTE chunk
-	0xff,0xff,0xff,                         // color map 0 - background (transparent)
-	0xff,0xff,0xff,                         // color map 1 - chart background (white)
-	0x00,0x00,0x00,                         // color map 2 - axes (black)
-	0x00,0x00,0x7f,                         // color map 3 - auxiliary lines (dark blue)
-	0x5f,0x20,0x00,                         // color map 4 - texts (brown)
-	0x00,0xff,0x00,                         // color map 5 - data1 (light green)
-	0x00,0x96,0x00,                         // color map 6 - data2 (green)
-	0x00,0x60,0x00,                         // color map 7 - data3 (dark green)
-	0xC0,0xC0,0xC0,                         // color map 8 - nodata (grey)
-	'C', 'R', 'C', '#',                     // CRC32 placeholder
+	0, 0, 0x3, 0x0, 'P', 'L', 'T', 'E',                                                               // PLTE chunk
+	0xff,0xff,0xff,                                                                                   // color map 0 - background (transparent)
+	0xff,0xff,0xff,                                                                                   // color map 1 - chart background (white)
+	0x00,0x00,0x00,                                                                                   // color map 2 - axes (black)
+	0x00,0x00,0x00,                                                                                   // color map 3 - auxiliary lines (black)
+	0x5f,0x20,0x00,                                                                                   // color map 4 - texts (brown)
+	0xC0,0xC0,0xC0,                                                                                   // color map 5 - nodata (grey)
+	0xFF,0xFF,0xDE,                                                                                   // color map 6 - warning background (light yellow)
+#if VERSMAJ==1
+        0x00,0xff,0x00,                         // color map 7 - data1 (light green)
+	0x00,0x96,0x00,                         // color map 8 - data2 (green)
+	0x00,0x60,0x00,                         // color map 9 - data3 (dark green)
+	                                                            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c0A - c0F
+#else
+	                                          0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c07 - c0F
+#endif
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c10 - c1F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c20 - c2F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c30 - c3F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c40 - c4F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c50 - c5F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c60 - c6F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c70 - c7F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c80 - c8F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // c90 - c9F
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cA0 - cAF
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cB0 - cBF
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cC0 - cCF
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cD0 - cDF
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cE0 - cEF
+	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,  // cF0 - cFF
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
 
-	0, 0, 0, 1, 't', 'R', 'N', 'S',         // tRNS chunk
-	0,                                      // color 0 transparency - alpha = 0
-	'C', 'R', 'C', '#',                     // CRC32 placeholder
+	0, 0, 0, 1, 't', 'R', 'N', 'S',                                                                   // tRNS chunk
+	0,                                                                                                // color 0 transparency - alpha = 0
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
 
-	0, 0, 0, 1, 'b', 'K', 'G', 'D',         // bKGD chunk
-	0,                                      // color 0 = background
-	'C', 'R', 'C', '#',                     // CRC32 placeholder
+	0, 0, 0, 1, 'b', 'K', 'G', 'D',                                                                   // bKGD chunk
+	0,                                                                                                // color 0 = background
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
 
-	0, 0, 0, 0, 'I', 'D', 'A', 'T'          // IDAT chunk
+	0, 0, 0, 0, 'I', 'D', 'A', 'T'                                                                    // IDAT chunk
 };
 
 static uint8_t png_tailer[] = {
-	'C', 'R', 'C', '#',			// CRC32 placeholder
-	0, 0, 0, 0, 'I', 'E', 'N', 'D',         // IEND chunk
-	'C', 'R', 'C', '#',                     // CRC32 placeholder
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
+	0, 0, 0, 0, 'I', 'E', 'N', 'D',                                                                   // IEND chunk
+	'C', 'R', 'C', '#',                                                                               // CRC32 placeholder
 };
 
 static uint8_t png_1x1[] = {
-	137, 80, 78, 71, 13, 10, 26, 10,        // signature
+	137, 80, 78, 71, 13, 10, 26, 10,                                                                  // signature
 
-	0, 0, 0, 13, 'I', 'H', 'D', 'R',        // IHDR chunk
-	0, 0, 0, 1,				// width
-	0, 0, 0, 1,				// height
-	8, 4, 0, 0, 0,                          // 8bits, grayscale with alpha color mode, default compression, default filters, no interlace
-	0xb5, 0x1c, 0x0c, 0x02,			// CRC
+	0, 0, 0, 13, 'I', 'H', 'D', 'R',                                                                  // IHDR chunk
+	0, 0, 0, 1,                                                                                       // width
+	0, 0, 0, 1,                                                                                       // height
+	8, 4, 0, 0, 0,                                                                                    // 8bits, grayscale with alpha color mode, default compression, default filters, no interlace
+	0xb5, 0x1c, 0x0c, 0x02,                                                                           // CRC
 
-	0, 0, 0, 11, 'I', 'D', 'A', 'T',	// IDAT chunk
+	0, 0, 0, 11, 'I', 'D', 'A', 'T',                                                                  // IDAT chunk
 	0x08, 0xd7, 0x63, 0x60, 0x60, 0x00,
 	0x00, 0x00, 0x03, 0x00, 0x01,
-	0x20, 0xd5, 0x94, 0xc7,			// CRC
+	0x20, 0xd5, 0x94, 0xc7,                                                                           // CRC
 
-	0, 0, 0, 0, 'I', 'E', 'N', 'D',		// IEND chunk
-	0xae, 0x42, 0x60, 0x82			// CRC
+	0, 0, 0, 0, 'I', 'E', 'N', 'D',                                                                   // IEND chunk
+	0xae, 0x42, 0x60, 0x82                                                                            // CRC
 };
 
 static uint8_t font[25][9]={
@@ -477,36 +531,49 @@ void charts_store (void) {
 #ifdef USE_NET_ORDER
 	uint8_t *ptr;
 	uint8_t hdr[16];
-	uint8_t data[8*LENG];
+	uint8_t data[8*MAXLENG];
 #else
 	uint32_t hdr[4];
 #endif
 	char namehdr[100];
 
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_lock(&glock));
+#endif
+
 	fd = open(statsfilename,O_WRONLY | O_TRUNC | O_CREAT,0666);
 	if (fd<0) {
 		mfs_errlog(LOG_WARNING,"error creating charts data file");
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_unlock(&glock));
+#endif
 		return;
 	}
 #ifdef USE_NET_ORDER
 	ptr = hdr;
 	put32bit(&ptr,CHARTS_FILE_VERSION);
-	put32bit(&ptr,LENG);
+	put32bit(&ptr,MAXLENG);
 	put32bit(&ptr,statdefscount);
 	put32bit(&ptr,timepoint[SHORTRANGE]);
 	if (write(fd,(void*)hdr,16)!=16) {
 		mfs_errlog(LOG_WARNING,"error writing charts data file");
 		close(fd);
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_unlock(&glock));
+#endif
 		return;
 	}
 #else
 	hdr[0]=CHARTS_FILE_VERSION;
-	hdr[1]=LENG;
+	hdr[1]=MAXLENG;
 	hdr[2]=statdefscount;
 	hdr[3]=timepoint[SHORTRANGE];
 	if (write(fd,(void*)hdr,sizeof(uint32_t)*4)!=sizeof(uint32_t)*4) {
 		mfs_errlog(LOG_WARNING,"error writing charts data file");
 		close(fd);
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_unlock(&glock));
+#endif
 		return;
 	}
 #endif
@@ -517,6 +584,9 @@ void charts_store (void) {
 		if (write(fd,(void*)namehdr,100)!=100) {
 			mfs_errlog(LOG_WARNING,"error writing charts data file");
 			close(fd);
+#ifdef USE_PTHREADS
+			zassert(pthread_mutex_unlock(&glock));
+#endif
 			return;
 		}
 		for (j=0 ; j<RANGES ; j++) {
@@ -524,199 +594,45 @@ void charts_store (void) {
 			p = pointers[j]+1;
 #ifdef USE_NET_ORDER
 			ptr = data;
-			for (s=0 ; s<LENG ; s++) {
-				put64bit(&ptr,tab[(p+s)%LENG]);
+			for (s=0 ; s<MAXLENG ; s++) {
+				put64bit(&ptr,tab[(p+s)%MAXLENG]);
 			}
-			if (write(fd,(void*)data,8*LENG)!=(ssize_t)(8*LENG)) {
+			if (write(fd,(void*)data,8*MAXLENG)!=(ssize_t)(8*MAXLENG)) {
 				mfs_errlog(LOG_WARNING,"error writing charts data file");
 				close(fd);
+#ifdef USE_PTHREADS
+				zassert(pthread_mutex_unlock(&glock));
+#endif
 				return;
 			}
 #else
-			if (p<LENG) {
-				if (write(fd,(void*)(tab+p),sizeof(uint64_t)*(LENG-p))!=(ssize_t)(sizeof(uint64_t)*(LENG-p))) {
+			if (p<MAXLENG) {
+				if (write(fd,(void*)(tab+p),sizeof(uint64_t)*(MAXLENG-p))!=(ssize_t)(sizeof(uint64_t)*(MAXLENG-p))) {
 					mfs_errlog(LOG_WARNING,"error writing charts data file");
 					close(fd);
+#ifdef USE_PTHREADS
+					zassert(pthread_mutex_unlock(&glock));
+#endif
 					return;
 				}
 			}
 			if (write(fd,(void*)tab,sizeof(uint64_t)*p)!=(ssize_t)(sizeof(uint64_t)*p)) {
 				mfs_errlog(LOG_WARNING,"error writing charts data file");
 				close(fd);
+#ifdef USE_PTHREADS
+				zassert(pthread_mutex_unlock(&glock));
+#endif
 				return;
 			}
 #endif
 		}
 	}
 	close(fd);
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_unlock(&glock));
+#endif
 }
 
-int charts_import_from_old_4ranges_format(int fd) {
-	uint32_t hdr[21];
-	uint32_t i,j,p,fleng,fcharts;
-	uint64_t *tab;
-	if (read(fd,(void*)hdr,sizeof(uint32_t)*21)!=(ssize_t)(sizeof(uint32_t)*21)) {
-		return -1;
-	}
-// hdr[0]:charts
-// hdr[1]:leng
-// hdr[2]:shhour;
-// hdr[3]:shmin;
-// hdr[4]:medhour;
-// hdr[5]:medmin;
-// hdr[6]:lnghalfhour;
-// hdr[7]:lngmday;
-// hdr[8]:lngmonth;
-// hdr[9]:lngyear;
-// hdr[10]:vlngmday;
-// hdr[11]:vlngmonth;
-// hdr[12]:vlngyear;
-// hdr[13]:pointers[SHORTRANGE];
-// hdr[14]:pointers[MEDIUMRANGE];
-// hdr[15]:pointers[LONGRANGE];
-// hdr[16]:pointers[VERYLONGRANGE];
-// hdr[17]:timepoint[SHORTRANGE];
-// hdr[18]:timepoint[MEDIUMRANGE];
-// hdr[19]:timepoint[LONGRANGE];
-// hdr[20]:timepoint[VERYLONGRANGE];
-	fcharts = hdr[0];
-	fleng = hdr[1];
-	timepoint[SHORTRANGE]=hdr[17];
-//	timepoint[MEDIUMRANGE]=hdr[17]/6;
-//	timepoint[LONGRANGE]=hdr[17]/30;
-//	timepoint[VERYLONGRANGE]=hdr[17]/(60*24);
-	pointers[SHORTRANGE]=LENG-1;
-	pointers[MEDIUMRANGE]=LENG-1;
-	pointers[LONGRANGE]=LENG-1;
-	pointers[VERYLONGRANGE]=LENG-1;
-	for (j=0 ; j<RANGES ; j++) {
-		p = hdr[13+j];
-		for (i=0 ; i<fcharts ; i++) {
-			if (i<statdefscount) {
-				tab = series[i][j];
-				if (fleng>=LENG) {
-					if (p>=LENG-1) {
-						if (p>LENG-1) {
-							lseek(fd,(p-(LENG-1))*sizeof(uint64_t),SEEK_CUR);
-						}
-						if (read(fd,(void*)tab,sizeof(uint64_t)*LENG)!=(ssize_t)(sizeof(uint64_t)*LENG)) {
-							return -1;
-						}
-						if (fleng-1>p) {
-							lseek(fd,((fleng-1-p))*sizeof(uint64_t),SEEK_CUR);
-						}
-					} else {
-						if (read(fd,(void*)(tab+(LENG-1-p)),sizeof(uint64_t)*(p+1))!=(ssize_t)(sizeof(uint64_t)*(p+1))) {
-							return -1;
-						}
-						if (LENG>fleng) {
-							lseek(fd,(fleng-LENG)*sizeof(uint64_t),SEEK_CUR);
-						}
-						if (read(fd,(void*)tab,(LENG-1-p)*sizeof(uint64_t))!=(ssize_t)((LENG-1-p)*sizeof(uint64_t))) {
-							return -1;
-						}
-					}
-				} else {
-					if (read(fd,(void*)(tab+(LENG-1-p)),sizeof(uint64_t)*(p+1))!=(ssize_t)(sizeof(uint64_t)*(p+1))) {
-						return -1;
-					}
-					if (p+1<fleng) {
-						if (read(fd,(void*)(tab+(LENG-fleng)),(fleng-1-p)*sizeof(uint64_t))!=(ssize_t)((fleng-1-p)*sizeof(uint64_t))) {
-							return -1;
-						}
-					}
-				}
-			} else {
-				lseek(fd,fleng*sizeof(uint64_t),SEEK_CUR);
-			}
-		}
-	}
-	return 0;
-}
-
-int charts_import_from_old_3ranges_format(int fd) {
-	uint32_t hdr[15];
-	uint32_t i,j,p,fleng,fcharts;
-	uint64_t *tab;
-	if (read(fd,(void*)hdr,sizeof(uint32_t)*15)!=(ssize_t)(sizeof(uint32_t)*15)) {
-		return -1;
-	}
-// hdr[0]:charts
-// hdr[1]:leng
-// hdr[2]:shhour;
-// hdr[3]:shmin;
-// hdr[4]:medhour;
-// hdr[5]:medmin;
-// hdr[6]:vlngmday;
-// hdr[7]:vlngmonth;
-// hdr[8]:vlngyear;
-// hdr[9]:pointers[SHORTRANGE];
-// hdr[10]:pointers[MEDIUMRANGE];
-// hdr[11]:pointers[VERYLONGRANGE];
-// hdr[12]:timepoint[SHORTRANGE];
-// hdr[13]:timepoint[MEDIUMRANGE];
-// hdr[14]:timepoint[VERYLONGRANGE];
-	fcharts = hdr[0];
-	fleng = hdr[1];
-	timepoint[SHORTRANGE]=hdr[12];
-//	timepoint[MEDIUMRANGE]=hdr[12]/6;
-//	timepoint[LONGRANGE]=hdr[12]/30;
-//	timepoint[VERYLONGRANGE]=hdr[12]/(60*24);
-	pointers[SHORTRANGE]=LENG-1;
-	pointers[MEDIUMRANGE]=LENG-1;
-	pointers[LONGRANGE]=LENG-1;
-	pointers[VERYLONGRANGE]=LENG-1;
-	for (j=0 ; j<RANGES ; j++) {
-		if (j==2) {
-			continue;
-		}
-		if (j<2) {
-			p = hdr[9+j];
-		} else {
-			p = hdr[11];
-		}
-		for (i=0 ; i<fcharts ; i++) {
-			if (i<statdefscount) {
-				tab = series[i][j];
-				if (fleng>=LENG) {
-					if (p>=LENG-1) {
-						if (p>LENG-1) {
-							lseek(fd,(p-(LENG-1))*sizeof(uint64_t),SEEK_CUR);
-						}
-						if (read(fd,(void*)tab,sizeof(uint64_t)*LENG)!=(ssize_t)(sizeof(uint64_t)*LENG)) {
-							return -1;
-						}
-						if (fleng-1>p) {
-							lseek(fd,((fleng-1-p))*sizeof(uint64_t),SEEK_CUR);
-						}
-					} else {
-						if (read(fd,(void*)(tab+(LENG-1-p)),sizeof(uint64_t)*(p+1))!=(ssize_t)(sizeof(uint64_t)*(p+1))) {
-							return -1;
-						}
-						if (LENG>fleng) {
-							lseek(fd,(fleng-LENG)*sizeof(uint64_t),SEEK_CUR);
-						}
-						if (read(fd,(void*)tab,(LENG-1-p)*sizeof(uint64_t))!=(ssize_t)((LENG-1-p)*sizeof(uint64_t))) {
-							return -1;
-						}
-					}
-				} else {
-					if (read(fd,(void*)(tab+(LENG-1-p)),sizeof(uint64_t)*(p+1))!=(ssize_t)(sizeof(uint64_t)*(p+1))) {
-						return -1;
-					}
-					if (p+1<fleng) {
-						if (read(fd,(void*)(tab+(LENG-fleng)),(fleng-1-p)*sizeof(uint64_t))!=(ssize_t)((fleng-1-p)*sizeof(uint64_t))) {
-							return -1;
-						}
-					}
-				}
-			} else {
-				lseek(fd,fleng*sizeof(uint64_t),SEEK_CUR);
-			}
-		}
-	}
-	return 0;
-}
 
 void charts_load(void) {
 	int fd;
@@ -726,7 +642,7 @@ void charts_load(void) {
 	uint32_t l;
 	const uint8_t *ptr;
 	uint8_t hdr[16];
-	uint8_t data[8*LENG];
+	uint8_t data[8*MAXLENG];
 #else
 	uint32_t hdr[3];
 #endif
@@ -750,19 +666,7 @@ void charts_load(void) {
 	ptr = hdr;
 	i = get32bit(&ptr);
 	if (i!=CHARTS_FILE_VERSION) {
-		lseek(fd,4,SEEK_SET);
-		memcpy((void*)&j,hdr,4);	// get first 4 bytes of hdr as a 32-bit number in "natural" order
-		if (j==4) {
-			if (charts_import_from_old_4ranges_format(fd)<0) {
-				mfs_syslog(LOG_WARNING,"error importing charts data from 4-ranges format");
-			}
-		} else if (j==3) {
-			if (charts_import_from_old_3ranges_format(fd)<0) {
-				mfs_syslog(LOG_WARNING,"error importing charts data from 3-ranges format");
-			}
-		} else {
-			mfs_syslog(LOG_WARNING,"unrecognized charts data file format - initializing empty charts");
-		}
+		mfs_syslog(LOG_WARNING,"unrecognized charts data file format - initializing empty charts");
 		close(fd);
 		return;
 	}
@@ -780,17 +684,7 @@ void charts_load(void) {
 		return;
 	}
 	if (hdr[0]!=CHARTS_FILE_VERSION) {
-		if (hdr[0]==4) {
-			if (charts_import_from_old_4ranges_format(fd)<0) {
-				mfs_syslog(LOG_WARNING,"error importing charts data from 4-ranges format");
-			}
-		} else if (hdr[0]==3) {
-			if (charts_import_from_old_3ranges_format(fd)<0) {
-				mfs_syslog(LOG_WARNING,"error importing charts data from 3-ranges format");
-			}
-		} else {
-			mfs_syslog(LOG_WARNING,"unrecognized charts data file format - initializing empty charts");
-		}
+		mfs_syslog(LOG_WARNING,"unrecognized charts data file format - initializing empty charts");
 		close(fd);
 		return;
 	}
@@ -806,10 +700,10 @@ void charts_load(void) {
 //	timepoint[LONGRANGE]=hdr[2]/30;
 //	timepoint[VERYLONGRANGE]=hdr[2]/(24*60);
 #endif
-	pointers[SHORTRANGE]=LENG-1;
-	pointers[MEDIUMRANGE]=LENG-1;
-	pointers[LONGRANGE]=LENG-1;
-	pointers[VERYLONGRANGE]=LENG-1;
+	pointers[SHORTRANGE]=MAXLENG-1;
+	pointers[MEDIUMRANGE]=MAXLENG-1;
+	pointers[LONGRANGE]=MAXLENG-1;
+	pointers[VERYLONGRANGE]=MAXLENG-1;
 	for (i=0 ; i<fcharts ; i++) {
 		if (read(fd,namehdr,100)!=100) {
 			mfs_errlog(LOG_WARNING,"error reading charts data file");
@@ -824,40 +718,40 @@ void charts_load(void) {
 		} else {
 			for (k=0 ; k<RANGES ; k++) {
 				tab = series[j][k];
-				if (fleng>LENG) {
-					lseek(fd,(fleng-LENG)*sizeof(uint64_t),SEEK_CUR);
+				if (fleng>MAXLENG) {
+					lseek(fd,(fleng-MAXLENG)*sizeof(uint64_t),SEEK_CUR);
 				}
 #ifdef USE_NET_ORDER
-				if (fleng<LENG) {
+				if (fleng<MAXLENG) {
 					if (read(fd,(void*)data,8*fleng)!=(ssize_t)(8*fleng)) {
 						mfs_errlog(LOG_WARNING,"error reading charts data file");
 						close(fd);
 						return;
 					}
 					ptr = data;
-					for (l=LENG-fleng ; l<LENG ; l++) {
+					for (l=MAXLENG-fleng ; l<MAXLENG ; l++) {
 						tab[l] = get64bit(&ptr);
 					}
 				} else {
-					if (read(fd,(void*)data,8*LENG)!=(ssize_t)(8*LENG)) {
+					if (read(fd,(void*)data,8*MAXLENG)!=(ssize_t)(8*MAXLENG)) {
 						mfs_errlog(LOG_WARNING,"error reading charts data file");
 						close(fd);
 						return;
 					}
 					ptr = data;
-					for (l=0 ; l<LENG ; l++) {
+					for (l=0 ; l<MAXLENG ; l++) {
 						tab[l] = get64bit(&ptr);
 					}
 				}
 #else
-				if (fleng<LENG) {
-					if (read(fd,(void*)(tab+(LENG-fleng)),sizeof(uint64_t)*fleng)!=(ssize_t)(sizeof(uint64_t)*fleng)) {
+				if (fleng<MAXLENG) {
+					if (read(fd,(void*)(tab+(MAXLENG-fleng)),sizeof(uint64_t)*fleng)!=(ssize_t)(sizeof(uint64_t)*fleng)) {
 						mfs_errlog(LOG_WARNING,"error reading charts data file");
 						close(fd);
 						return;
 					}
 				} else {
-					if (read(fd,(void*)tab,sizeof(uint64_t)*LENG)!=(ssize_t)(sizeof(uint64_t)*LENG)) {
+					if (read(fd,(void*)tab,sizeof(uint64_t)*MAXLENG)!=(ssize_t)(sizeof(uint64_t)*MAXLENG)) {
 						mfs_errlog(LOG_WARNING,"error reading charts data file");
 						close(fd);
 						return;
@@ -872,7 +766,7 @@ void charts_load(void) {
 	return;
 }
 
-void charts_filltab(uint64_t *datatab,uint32_t range,uint32_t type,uint32_t cno) {
+uint8_t charts_filltab(uint64_t *datatab,uint32_t range,uint32_t type,uint32_t cno,uint32_t width) {
 #if defined(INT64_MIN)
 #  define STACK_NODATA INT64_MIN
 #elif defined(INT64_C)
@@ -881,25 +775,23 @@ void charts_filltab(uint64_t *datatab,uint32_t range,uint32_t type,uint32_t cno)
 #  define STACK_NODATA (-9223372036854775807LL-1)
 #endif
 
-	uint32_t i;
+	uint32_t i,j;
+	uint32_t pointer;
 	uint32_t src,*ops;
 	int64_t stack[50];
 	uint32_t sp;
+
 	if (range>=RANGES || cno==0 || cno>3) {
-		for (i=0 ; i<LENG ; i++) {
-			datatab[i] = CHARTS_NODATA;
-		}
-		return;
+		return 0;
 	}
+	pointer = pointers[range];
 	if (CHARTS_IS_DIRECT_STAT(type)) {
 		if (cno==1) {
-			for (i=0 ; i<LENG ; i++) {
-				datatab[i] = series[type][range][i];
+			for (i=0 ; i<width ; i++) {
+				j = (MAXLENG-width+1+pointer+i)%MAXLENG;
+				datatab[i] = series[type][range][j];
 			}
-		} else {
-			for (i=0 ; i<LENG ; i++) {
-				datatab[i] = CHARTS_NODATA;
-			}
+			return 1;
 		}
 	} else if (CHARTS_IS_EXTENDED_STAT(type)) {
 		if (cno==1) {
@@ -910,20 +802,23 @@ void charts_filltab(uint64_t *datatab,uint32_t range,uint32_t type,uint32_t cno)
 			src = estatdefs[CHARTS_EXTENDED_POS(type)].c3src;
 		}
 		if (CHARTS_DEF_IS_DIRECT(src)) {
-			for (i=0 ; i<LENG ; i++) {
-				datatab[i] = series[CHARTS_DIRECT_POS(src)][range][i];
+			for (i=0 ; i<width ; i++) {
+				j = (MAXLENG-width+1+pointer+i)%MAXLENG;
+				datatab[i] = series[CHARTS_DIRECT_POS(src)][range][j];
 			}
+			return 1;
 		} else if (CHARTS_DEF_IS_CALC(src)) {
-			for (i=0 ; i<LENG ; i++) {
+			for (i=0 ; i<width ; i++) {
+				j = (MAXLENG-width+1+pointer+i)%MAXLENG;
 				sp=0;
 				ops = calcstartpos[CHARTS_CALC_POS(src)];
 				while (*ops!=CHARTS_OP_END) {
 					if (CHARTS_IS_DIRECT_STAT(*ops)) {
 						if (sp<50) {
-							if (series[*ops][range][i]==CHARTS_NODATA) {
+							if (series[*ops][range][j]==CHARTS_NODATA) {
 								stack[sp]=STACK_NODATA;
 							} else {
-								stack[sp]=series[*ops][range][i];
+								stack[sp]=series[*ops][range][j];
 							}
 							sp++;
 						}
@@ -1002,33 +897,37 @@ void charts_filltab(uint64_t *datatab,uint32_t range,uint32_t type,uint32_t cno)
 					datatab[i]=CHARTS_NODATA;
 				}
 			}
-		} else {
-			for (i=0 ; i<LENG ; i++) {
-				datatab[i] = CHARTS_NODATA;
-			}
-		}
-	} else {
-		for (i=0 ; i<LENG ; i++) {
-			datatab[i] = CHARTS_NODATA;
+			return 1;
 		}
 	}
+	return 0;
 }
 
 uint64_t charts_get (uint32_t type,uint32_t numb) {
 	uint64_t result=0,cnt;
 	uint64_t *tab;
-	uint32_t i,ptr;
+	uint32_t i,j;
 
-	if (numb==0 || numb>LENG) return result;
+	if (numb==0 || numb>MAXLENG) {
+		return result;
+	}
 	if (CHARTS_IS_DIRECT_STAT(type)) {
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_lock(&glock));
+#endif
 		tab = series[type][SHORTRANGE];
-		ptr = pointers[SHORTRANGE];
+		j = pointers[SHORTRANGE] % MAXLENG;
 		if (statdefs[type].mode == CHARTS_MODE_ADD) {
 			cnt=0;
 			for (i=0 ; i<numb ; i++) {
-				if (tab[(LENG+ptr-i)%LENG]!=CHARTS_NODATA) {
-					result += tab[(LENG+ptr-i)%LENG];
+				if (tab[j]!=CHARTS_NODATA) {
+					result += tab[j];
 					cnt++;
+				}
+				if (j>0) {
+					j--;
+				} else {
+					j = MAXLENG-1;
 				}
 			}
 			if (cnt>0) {
@@ -1036,11 +935,19 @@ uint64_t charts_get (uint32_t type,uint32_t numb) {
 			}
 		} else {
 			for (i=0 ; i<numb ; i++) {
-				if (tab[(LENG+ptr-i)%LENG]!=CHARTS_NODATA && tab[(LENG+ptr-i)%LENG]>result) {
-					result = tab[(LENG+ptr-i)%LENG];
+				if (tab[j]!=CHARTS_NODATA && tab[j]>result) {
+					result = tab[j];
+				}
+				if (j>0) {
+					j--;
+				} else {
+					j = MAXLENG-1;
 				}
 			}
 		}
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_unlock(&glock));
+#endif
 	}
 	return result;
 }
@@ -1099,6 +1006,9 @@ void charts_add (uint64_t *data,uint32_t datats) {
 	local = now;
 #endif
 
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_lock(&glock));
+#endif
 // short range chart - every 1 min
 
 	nowtime = local / 60;
@@ -1106,10 +1016,12 @@ void charts_add (uint64_t *data,uint32_t datats) {
 	delta = nowtime - timepoint[SHORTRANGE];
 
 	if (delta>0) {
-		if (delta>LENG) delta=LENG;
+		if (delta>MAXLENG) {
+			delta=MAXLENG;
+		}
 		while (delta>0) {
 			pointers[SHORTRANGE]++;
-			pointers[SHORTRANGE]%=LENG;
+			pointers[SHORTRANGE]%=MAXLENG;
 			for (i=0 ; i<statdefscount ; i++) {
 				series[i][SHORTRANGE][pointers[SHORTRANGE]] = CHARTS_NODATA;
 			}
@@ -1119,8 +1031,8 @@ void charts_add (uint64_t *data,uint32_t datats) {
 		shmin = ts->tm_min;
 		shhour = ts->tm_hour;
 	}
-	if (delta<=0 && delta>-LENG && data) {
-		i = (pointers[SHORTRANGE] + LENG + delta) % LENG;
+	if (delta<=0 && delta>-MAXLENG && data) {
+		i = (pointers[SHORTRANGE] + MAXLENG + delta) % MAXLENG;
 		for (j=0 ; j<statdefscount ; j++) {
 			if (series[j][SHORTRANGE][i]==CHARTS_NODATA) {   // no data
 				series[j][SHORTRANGE][i] = data[j];
@@ -1139,10 +1051,12 @@ void charts_add (uint64_t *data,uint32_t datats) {
 	delta = nowtime - timepoint[MEDIUMRANGE];
 
 	if (delta>0) {
-		if (delta>LENG) delta=LENG;
+		if (delta>MAXLENG) {
+			delta=MAXLENG;
+		}
 		while (delta>0) {
 			pointers[MEDIUMRANGE]++;
-			pointers[MEDIUMRANGE]%=LENG;
+			pointers[MEDIUMRANGE]%=MAXLENG;
 			for (i=0 ; i<statdefscount ; i++) {
 				series[i][MEDIUMRANGE][pointers[MEDIUMRANGE]] = CHARTS_NODATA;
 			}
@@ -1152,8 +1066,8 @@ void charts_add (uint64_t *data,uint32_t datats) {
 		medmin = ts->tm_min;
 		medhour = ts->tm_hour;
 	}
-	if (delta<=0 && delta>-LENG && data) {
-		i = (pointers[MEDIUMRANGE] + LENG + delta) % LENG;
+	if (delta<=0 && delta>-MAXLENG && data) {
+		i = (pointers[MEDIUMRANGE] + MAXLENG + delta) % MAXLENG;
 		for (j=0 ; j<statdefscount ; j++) {
 			if (series[j][MEDIUMRANGE][i]==CHARTS_NODATA) {  // no data
 				series[j][MEDIUMRANGE][i] = data[j];
@@ -1173,10 +1087,12 @@ void charts_add (uint64_t *data,uint32_t datats) {
 	delta = nowtime - timepoint[LONGRANGE];
 
 	if (delta>0) {
-		if (delta>LENG) delta=LENG;
+		if (delta>MAXLENG) {
+			delta=MAXLENG;
+		}
 		while (delta>0) {
 			pointers[LONGRANGE]++;
-			pointers[LONGRANGE]%=LENG;
+			pointers[LONGRANGE]%=MAXLENG;
 			for (i=0 ; i<statdefscount ; i++) {
 				series[i][LONGRANGE][pointers[LONGRANGE]] = CHARTS_NODATA;
 			}
@@ -1191,8 +1107,8 @@ void charts_add (uint64_t *data,uint32_t datats) {
 		lngmonth = ts->tm_mon + 1;
 		lngyear = ts->tm_year + 1900;
 	}
-	if (delta<=0 && delta>-LENG && data) {
-		i = (pointers[LONGRANGE] + LENG + delta) % LENG;
+	if (delta<=0 && delta>-MAXLENG && data) {
+		i = (pointers[LONGRANGE] + MAXLENG + delta) % MAXLENG;
 		for (j=0 ; j<statdefscount ; j++) {
 			if (series[j][LONGRANGE][i]==CHARTS_NODATA) {    // no data
 				series[j][LONGRANGE][i] = data[j];
@@ -1210,10 +1126,12 @@ void charts_add (uint64_t *data,uint32_t datats) {
 	delta = nowtime - timepoint[VERYLONGRANGE];
 
 	if (delta>0) {
-		if (delta>LENG) delta=LENG;
+		if (delta>MAXLENG) {
+			delta=MAXLENG;
+		}
 		while (delta>0) {
 			pointers[VERYLONGRANGE]++;
-			pointers[VERYLONGRANGE]%=LENG;
+			pointers[VERYLONGRANGE]%=MAXLENG;
 			for (i=0 ; i<statdefscount ; i++) {
 				series[i][VERYLONGRANGE][pointers[VERYLONGRANGE]] = CHARTS_NODATA;
 			}
@@ -1224,8 +1142,8 @@ void charts_add (uint64_t *data,uint32_t datats) {
 		vlngmonth = ts->tm_mon + 1;
 		vlngyear = ts->tm_year + 1900;
 	}
-	if (delta<=0 && delta>-LENG && data) {
-		i = (pointers[VERYLONGRANGE] + LENG + delta) % LENG;
+	if (delta<=0 && delta>-MAXLENG && data) {
+		i = (pointers[VERYLONGRANGE] + MAXLENG + delta) % MAXLENG;
 		for (j=0 ; j<statdefscount ; j++) {
 			if (series[j][VERYLONGRANGE][i]==CHARTS_NODATA) {  // no data
 				series[j][VERYLONGRANGE][i] = data[j];
@@ -1236,10 +1154,17 @@ void charts_add (uint64_t *data,uint32_t datats) {
 			}
 		}
 	}
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_unlock(&glock));
+#endif
 }
 
 void charts_term (void) {
-	uint32_t i;
+	uint32_t i,j;
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_lock(&glock));
+	zassert(pthread_mutex_unlock(&glock));
+#endif
 	free(statsfilename);
 	if (calcdefs) {
 		free(calcdefs);
@@ -1256,16 +1181,71 @@ void charts_term (void) {
 	if (statdefs) {
 		free(statdefs);
 	}
+	for (i=0 ; i<statdefscount ; i++) {
+		for (j=0 ; j<RANGES ; j++) {
+			if (series[i][j]) {
+				free(series[i][j]);
+			}
+		}
+	}
 	if (series) {
 		free(series);
+	}
+	if (compbuff) {
+		free(compbuff);
+	}
+	if (rawchart) {
+		free(rawchart);
+	}
+	if (chart) {
+		free(chart);
 	}
 #ifdef HAVE_ZLIB_H
 	deflateEnd(&zstr);
 #endif
 }
 
+static inline void png_make_palette(void) {
+	uint32_t rng,indx;
+	double r,g,b,dr,db,dg;
+	for (rng=0 ; rng<3 ; rng++) {
+		r = data_colors[rng*6+0];
+		g = data_colors[rng*6+1];
+		b = data_colors[rng*6+2];
+		dr = data_colors[rng*6+3];
+		dg = data_colors[rng*6+4];
+		db = data_colors[rng*6+5];
+		dr -= r;
+		dg -= g;
+		db -= b;
+		dr /= COLOR_DATA_RANGE;
+		dg /= COLOR_DATA_RANGE;
+		db /= COLOR_DATA_RANGE;
+		r += 0.5;
+		g += 0.5;
+		b += 0.5;
+		for (indx = 0 ; indx < COLOR_DATA_RANGE ; indx++) {
+			png_header[41+(COLOR_DATA_BEGIN+rng*COLOR_DATA_RANGE+indx)*3+0] = r;
+			png_header[41+(COLOR_DATA_BEGIN+rng*COLOR_DATA_RANGE+indx)*3+1] = g;
+			png_header[41+(COLOR_DATA_BEGIN+rng*COLOR_DATA_RANGE+indx)*3+2] = b;
+			r+=dr;
+			g+=dg;
+			b+=db;
+		}
+	}
+}
+
 int charts_init (const uint32_t *calcs,const statdef *stats,const estatdef *estats,const char *filename) {
 	uint32_t i,j;
+
+	chart = malloc(MAXXSIZE*MAXYSIZE);
+	passert(chart);
+	rawchartsize = (1+MAXXSIZE)*(MAXYSIZE);
+	rawchart = malloc(rawchartsize);
+	passert(rawchart);
+	compbuffsize = ((uint64_t)rawchartsize*UINT64_C(1001))/UINT64_C(1000)+16;
+	compbuff = malloc(compbuffsize);
+	passert(compbuff);
 
 	statsfilename = strdup(filename);
 	passert(statsfilename);
@@ -1333,11 +1313,15 @@ int charts_init (const uint32_t *calcs,const statdef *stats,const estatdef *esta
 	if (statdefscount>0) {
 		series = (stat_record*)malloc(sizeof(stat_record)*statdefscount);
 		passert(series);
+		for (i=0 ; i<statdefscount ; i++) {
+			for (j=0 ; j<RANGES ; j++) {
+				series[i][j] = malloc(MAXLENG*sizeof(uint64_t));
+				passert(series[i][j]);
+				memset(series[i][j],0xFF,MAXLENG*sizeof(uint64_t));
+			}
+		}
 	} else {
 		series = NULL;
-	}
-	for (i=0 ; i<statdefscount ; i++) {
-		memset(series+i,0xFF,sizeof(stat_record));
 	}
 
 	for (i=0 ; i<RANGES ; i++) {
@@ -1353,10 +1337,12 @@ int charts_init (const uint32_t *calcs,const statdef *stats,const estatdef *esta
 	zstr.zalloc = NULL;
 	zstr.zfree = NULL;
 	zstr.opaque = NULL;
-	if (deflateInit(&zstr,Z_DEFAULT_COMPRESSION)!=Z_OK) {
+	if (deflateInit(&zstr,Z_BEST_SPEED)!=Z_OK) {
+	//if (deflateInit(&zstr,Z_DEFAULT_COMPRESSION)!=Z_OK) {
 		return -1;
 	}
 #endif /* HAVE_ZLIB_H */
+	png_make_palette();
 	return 0;
 }
 
@@ -1365,15 +1351,24 @@ static inline void charts_putwarning(uint32_t posx,uint32_t posy,uint8_t color) 
 	uint8_t *w,c,fx,fy,b;
 	uint32_t x,y;
 	w = warning;
-	y = posy;
+	for (fy=0 ; fy<11 ; fy++) {
+		y = fy+posy;
+		for (fx=0 ; fx<86 ; fx++) {
+			x = fx+posx;
+			if (x<MAXXSIZE && y<MAXYSIZE) {
+				chart[(MAXXSIZE)*y+x] = (fy==0||fy==10||fx==0||fx==85)?COLOR_AXIS:COLOR_TEXTBKG;
+			}
+		}
+	}
+	y = posy+3;
 	for (fy=0 ; fy<5 ; fy++) {
-		x = posx;
+		x = posx+3;
 		for (b=0 ; b<10 ; b++) {
 			c = *w;
 			w++;
 			for (fx=0 ; fx<8 ; fx++) {
-				if (c&0x80 && x<XSIZE && y<YSIZE) {
-					chart[(XSIZE)*y+x] = color;
+				if (c&0x80 && x<MAXXSIZE && y<MAXYSIZE) {
+					chart[(MAXXSIZE)*y+x] = color;
 				}
 				c<<=1;
 				x++;
@@ -1401,7 +1396,7 @@ static inline void charts_puttext(int32_t posx,int32_t posy,uint8_t color,uint8_
 					x = px+fx;
 					y = posy+fy;
 					if (fbits&0x10 && x>=minx && x<=maxx && y>=miny && y<=maxy) {
-						chart[(XSIZE)*y+x] = color;
+						chart[(MAXXSIZE)*y+x] = color;
 					}
 					fbits<<=1;
 				}
@@ -1410,111 +1405,100 @@ static inline void charts_puttext(int32_t posx,int32_t posy,uint8_t color,uint8_
 	}
 }
 
-double charts_fixmax(uint64_t max,uint8_t *scale,uint8_t *mode,uint16_t *base) {
-	double rmax;
-	if (max>995000000000000000ULL) {						// ##.# E
-		(*base) = (max+499999999999999999ULL)/500000000000000000ULL;
-		rmax = (*base)*500000000000000000ULL;
-		(*mode) = 1;
-		(*scale) += 6;
-	} else if (max>99500000000000000ULL) {						// ### P
-		(*base) = (max+4999999999999999ULL)/5000000000000000ULL;
-		rmax = (*base)*5000000000000000ULL;
-		(*mode) = 0;
-		(*scale) += 5;
-	} else if (max>995000000000000ULL) {						// ##.# P
-		(*base) = (max+499999999999999ULL)/500000000000000ULL;
-		rmax = (*base)*500000000000000ULL;
-		(*mode) = 1;
-		(*scale) += 5;
-	} else if (max>99500000000000ULL) {						// ### T
-		(*base) = (max+4999999999999ULL)/5000000000000ULL;
-		rmax = (*base)*5000000000000ULL;
-		(*mode) = 0;
-		(*scale) += 4;
-	} else if (max>995000000000ULL) {						// ##.# T
-		(*base) = (max+499999999999ULL)/500000000000ULL;
-		rmax = (*base)*500000000000ULL;
-		(*mode) = 1;
-		(*scale) += 4;
-	} else if (max>99500000000ULL) {						// ### G
-		(*base) = (max+4999999999ULL)/5000000000ULL;
-		rmax = (*base)*5000000000ULL;
-		(*mode) = 0;
-		(*scale) += 3;
-	} else if (max>995000000ULL) {							// ##.# G
-		(*base) = (max+499999999ULL)/500000000ULL;
-		rmax = (*base)*500000000ULL;
-		(*mode) = 1;
-		(*scale) += 3;
-	} else if (max>99500000ULL) {							// ### M
-		(*base) = (max+4999999ULL)/5000000ULL;
-		rmax = (*base)*5000000ULL;
-		(*mode) = 0;
-		(*scale) += 2;
-	} else if (max>995000ULL) {							// ##.# M
-		(*base) = (max+499999ULL)/500000ULL;
-		rmax = (*base)*500000ULL;
-		(*mode) = 1;
-		(*scale) += 2;
-	} else if (max>99500ULL) {							// ### k
-		(*base) = (max+4999ULL)/5000ULL;
-		rmax = (*base)*5000ULL;
-		(*mode) = 0;
-		(*scale) += 1;
-	} else if (max>995ULL) {							// ##.# k
-		(*base) = (max+499ULL)/500ULL;
-		rmax = (*base)*500ULL;
-		(*mode) = 1;
-		(*scale) += 1;
-	} else if (max>99ULL) {								// ###
-		(*base) = (max+4ULL)/5ULL;
-		rmax = (*base)*5ULL;
-		(*mode) = 0;
-	} else {									// ##.#
-		if (max==0) {
-			max=1;
-		}
-		(*base) = max*2;
-		rmax = ((*base)*5)/10.0;
-		(*mode) = 1;
+double charts_fixmax(uint64_t max,uint32_t ypts,uint8_t *scale,uint8_t *mode,uint16_t *base) {
+	uint64_t cpmax,factor;
+	uint8_t cmode,ascale;
+
+	if (max==0) {
+		max=1;
 	}
-	return rmax;
+	if (max<=9) {
+		(*base) = ((max*100)+ypts-1)/ypts;
+		if (((*base)*ypts)<1000) {
+			(*mode) = 2;
+			return ((*base)*ypts)/100;
+		}
+	}
+	if (max<=99) {
+		(*base) = ((max*10)+ypts-1)/ypts;
+		if (((*base)*ypts)<1000) {
+			(*mode) = 1;
+			return ((*base)*ypts)/10;
+		}
+	}
+	cpmax = 999;
+	cmode = 0;
+	ascale = 0;
+	factor = ypts;
+	while (1) {
+		if (max<=cpmax) {
+			(*base) = (max+factor-1)/factor;
+			if (((*base)*ypts)<1000) {
+				(*mode) = cmode;
+				(*scale) += ascale;
+				return ((*base)*factor);
+			}
+		}
+		if (cmode==0) {
+			cmode=2;
+			ascale+=1;
+		} else {
+			cmode--;
+		}
+		factor *= 10U;
+		if (cpmax*10U > cpmax) {
+			cpmax *= 10U;
+		} else {
+			if (max+9<max) {
+				(*base) = (max/10+factor/10-1)/(factor/10);
+			} else {
+				(*base) = ((max+9)/10+factor/10-1)/(factor/10);
+			}
+			(*mode) = cmode;
+			(*scale) += ascale;
+			return ((double)(*base)*(double)factor);
+		}
+	}
 }
 
-void charts_makechart(uint32_t type,uint32_t range) {
+void charts_makechart(uint32_t type,uint32_t range,uint32_t width,uint32_t height) {
 	static const uint8_t jtab[11]={MICRO,MILI,SPACE,KILO,MEGA,GIGA,TERA,PETA,EXA,ZETTA,YOTTA};
 	int32_t i,j;
-	uint32_t xy,xm,xd,xh,xs,xoff,xbold,ys;
+	uint32_t xy,xm,xd,xh,xs,xoff,xbold,ys,ypts;
 	uint64_t max;
 	double dmax;
 	uint64_t d,c1d,c2d,c3d;
-	uint64_t c1dispdata[LENG];
-	uint64_t c2dispdata[LENG];
-	uint64_t c3dispdata[LENG];
+	uint64_t c1dispdata[MAXLENG];
+	uint64_t c2dispdata[MAXLENG];
+	uint64_t c3dispdata[MAXLENG];
 	uint8_t scale,mode=0,percent=0;
 	uint16_t base=0;
-	uint32_t pointer;
 	uint8_t text[6];
+	uint8_t colors;
 
-	memset(chart,COLOR_TRANSPARENT,(XSIZE)*(YSIZE));
+	memset(chart,COLOR_TRANSPARENT,(MAXXSIZE)*(MAXYSIZE));
 
-	charts_filltab(c1dispdata,range,type,1);
-	charts_filltab(c2dispdata,range,type,2);
-	charts_filltab(c3dispdata,range,type,3);
-
-	pointer = pointers[range];
+	colors = 0;
+	if (charts_filltab(c1dispdata,range,type,1,width)) {
+		colors = 1;
+	}
+	if (charts_filltab(c2dispdata,range,type,2,width)) {
+		colors = 2;
+	}
+	if (charts_filltab(c3dispdata,range,type,3,width)) {
+		colors = 3;
+	}
 
 	max = 0;
-	for (i=0 ; i<LENG ; i++) {
+	for (i=0 ; i<(int32_t)width ; i++) {
 		d = 0;
-		if (c1dispdata[i]!=CHARTS_NODATA) {
+		if (colors>=1 && c1dispdata[i]!=CHARTS_NODATA) {
 			d += c1dispdata[i];
 		}
-		if (c2dispdata[i]!=CHARTS_NODATA) {
+		if (colors>=2 && c2dispdata[i]!=CHARTS_NODATA) {
 			d += c2dispdata[i];
 		}
-		if (c3dispdata[i]!=CHARTS_NODATA) {
+		if (colors>=3 && c3dispdata[i]!=CHARTS_NODATA) {
 			d += c3dispdata[i];
 		}
 		if (d>max) {
@@ -1522,14 +1506,14 @@ void charts_makechart(uint32_t type,uint32_t range) {
 		}
 	}
 	if (max>1000000000000000000ULL) {	// arithmetic overflow protection
-		for (i=0 ; i<LENG ; i++) {
-			if (c1dispdata[i]!=CHARTS_NODATA) {
+		for (i=0 ; i<(int32_t)width ; i++) {
+			if (colors>=1 && c1dispdata[i]!=CHARTS_NODATA) {
 				c1dispdata[i]/=1000;
 			}
-			if (c2dispdata[i]!=CHARTS_NODATA) {
+			if (colors>=2 && c2dispdata[i]!=CHARTS_NODATA) {
 				c2dispdata[i]/=1000;
 			}
-			if (c3dispdata[i]!=CHARTS_NODATA) {
+			if (colors>=3 && c3dispdata[i]!=CHARTS_NODATA) {
 				c3dispdata[i]/=1000;
 			}
 		}
@@ -1566,7 +1550,8 @@ void charts_makechart(uint32_t type,uint32_t range) {
 		max /= estatdefs[CHARTS_EXTENDED_POS(type)].divisor;
 	}
 
-	dmax = charts_fixmax(max,&scale,&mode,&base);
+	ypts = height/20;
+	dmax = charts_fixmax(max,ypts,&scale,&mode,&base);
 
 	if (CHARTS_IS_DIRECT_STAT(type)) {
 		dmax *= statdefs[type].divisor;
@@ -1592,62 +1577,89 @@ void charts_makechart(uint32_t type,uint32_t range) {
 	}
 
 //	m = 0;
-	for (i=0 ; i<LENG ; i++) {
-		j = (LENG+1+pointer+i)%LENG;
-		if ((c1dispdata[j]&c2dispdata[j]&c3dispdata[j])==CHARTS_NODATA) {
-			for (j=0 ; j<DATA ; j++) {
-				chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = ((j+i)%3)?COLOR_BKG:COLOR_NODATA; //(((j+i)&3)&&((j+2+LENG-i)&3))?COLOR_BKG:COLOR_DATA1;
+	for (i=0 ; i<(int32_t)width ; i++) {
+		j = 0;
+		if (colors>=3 && c3dispdata[i]!=CHARTS_NODATA) {
+			c3d = c3dispdata[i];
+			j = 1;
+		} else {
+			c3d = 0;
+		}
+		if (colors>=2 && c2dispdata[i]!=CHARTS_NODATA) {
+			c2d = c3d + c2dispdata[i];
+			j = 1;
+		} else {
+			c2d = c3d;
+		}
+		if (colors>=1 && c1dispdata[i]!=CHARTS_NODATA) {
+			c1d = c2d + c1dispdata[i];
+			j = 1;
+		} else {
+			c1d = c2d;
+		}
+
+		if (j==0) {
+			for (j=0 ; j<(int32_t)height ; j++) {
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = ((j+i)%3)?COLOR_BKG:COLOR_NODATA; //(((j+i)&3)&&((j+2+LENG-i)&3))?COLOR_BKG:COLOR_DATA1;
 			}
 		} else {
-			if (c3dispdata[j]!=CHARTS_NODATA) {
-				c3d = c3dispdata[j];
-			} else {
-				c3d = 0;
-			}
-			if (c2dispdata[j]!=CHARTS_NODATA) {
-				c2d = c3d + c2dispdata[j];
-			} else {
-				c2d = c3d;
-			}
-			if (c1dispdata[j]!=CHARTS_NODATA) {
-				c1d = c2d + c1dispdata[j];
-			} else {
-				c1d = c2d;
-			}
-			c1d *= DATA;
+			c1d *= height;
 			c1d /= dmax;
-			c2d *= DATA;
+			c2d *= height;
 			c2d /= dmax;
-			c3d *= DATA;
+			c3d *= height;
 			c3d /= dmax;
 
 			j=0;
-			while (DATA>=c1d+j) {
-				chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_BKG;
+			while (height>=c1d+j) {
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_BKG;
 				j++;
 			}
-			while (DATA>=c2d+j) {
-				chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA1;
+			while (height>=c2d+j) {
+#if VERSMAJ==1
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA1;
+#else
+				if (colors==1) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + (height-1-j)*3*COLOR_DATA_RANGE/height;
+				} else if (colors==2) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + (height-1-j)*1.5*COLOR_DATA_RANGE/height;
+				} else if (colors==3) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + (height-1-j)*COLOR_DATA_RANGE/height;
+				}
+#endif
 				j++;
 			}
-			while (DATA>=c3d+j) {
-				chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA2;
+			while (height>=c3d+j) {
+#if VERSMAJ==1
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA2;
+#else
+				if (colors==2) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + 1.5*COLOR_DATA_RANGE + (height-1-j)*1.5*COLOR_DATA_RANGE/height;
+				} else if (colors==3) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + COLOR_DATA_RANGE + (height-1-j)*COLOR_DATA_RANGE/height;
+				}
+#endif
 				j++;
 			}
-			while (DATA>j) {
-				chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA3;
+			while ((int32_t)height>j) {
+#if VERSMAJ==1
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA3;
+#else
+				chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_DATA_BEGIN + 2*COLOR_DATA_RANGE + (height-1-j)*COLOR_DATA_RANGE/height;
+#endif
 				j++;
 			}
 		}
 	}
 	// axes
-	for (i=-3 ; i<LENG+3 ; i++) {
-		chart[(XSIZE)*(DATA+YPOS)+(i+XPOS)] = COLOR_AXIS;
+	for (i=-3 ; i<(int32_t)width+3 ; i++) {
+		chart[(MAXXSIZE)*(height+YPOS)+(i+XPOS)] = COLOR_AXIS;
 	}
-	for (i=-2 ; i<DATA+5 ; i++) {
-		chart[(XSIZE)*(DATA-i+YPOS)+(XPOS-1)] = COLOR_AXIS;
-		chart[(XSIZE)*(DATA-i+YPOS)+(XPOS+LENG)] = COLOR_AXIS;
+	for (i=-2 ; i<(int32_t)height+5 ; i++) {
+		chart[(MAXXSIZE)*(height-i+YPOS)+(XPOS-1)] = COLOR_AXIS;
+		chart[(MAXXSIZE)*(height-i+YPOS)+(XPOS+width)] = COLOR_AXIS;
 	}
+
 	// x scale
 	xy = xm = xd = xh = xs = 0;
 	if (range<3) {
@@ -1670,8 +1682,8 @@ void charts_makechart(uint32_t type,uint32_t range) {
 			xbold = 1;
 			xh = shhour;
 		}
-//		k = LENG;
-		for (i=LENG-xoff-1 ; i>=0 ; i-=xs) {
+//		k = MAXLENG;
+		for (i=width-xoff-1 ; i>=0 ; i-=xs) {
 			if (xh%xbold==0) {
 				ys=2;
 				if ((range==0 && xh%6==0) || (range==1 && xh==0) || (range==2 && xd==1)) {
@@ -1683,14 +1695,14 @@ void charts_makechart(uint32_t type,uint32_t range) {
 					text[2]=COLON;
 					text[3]=0;
 					text[4]=0;
-					charts_puttext(XPOS+i-14,(YPOS+DATA)+4,COLOR_TEXT,text,5,XPOS-1,XPOS+LENG,0,YSIZE-1);
+					charts_puttext(XPOS+i-14,(YPOS+height)+4,COLOR_TEXT,text,5,XPOS,XPOS+width-1,0,MAXYSIZE-1);
 				} else {
 					text[0]=xm/10;
 					text[1]=xm%10;
 					text[2]=FDOT;
 					text[3]=xd/10;
 					text[4]=xd%10;
-					charts_puttext(XPOS+i+10,(YPOS+DATA)+4,COLOR_TEXT,text,5,XPOS-1,XPOS+LENG,0,YSIZE-1);
+					charts_puttext(XPOS+i+10,(YPOS+height)+4,COLOR_TEXT,text,5,XPOS,XPOS+width-1,0,MAXYSIZE-1);
 					xd--;
 					if (xd==0) {
 						xm--;
@@ -1701,14 +1713,14 @@ void charts_makechart(uint32_t type,uint32_t range) {
 						xd = getmonleng(xy,xm);
 					}
 				}
-				chart[(XSIZE)*(YPOS+DATA+1)+(i+XPOS)] = COLOR_AXIS;
-				chart[(XSIZE)*(YPOS+DATA+2)+(i+XPOS)] = COLOR_AXIS;
+				chart[(MAXXSIZE)*(YPOS+height+1)+(i+XPOS)] = COLOR_AXIS;
+				chart[(MAXXSIZE)*(YPOS+height+2)+(i+XPOS)] = COLOR_AXIS;
 			} else {
 				ys=4;
 			}
-			for (j=0 ; j<DATA ; j+=ys) {
+			for (j=0 ; j<(int32_t)height ; j+=ys) {
 				if (ys>1 || (j%4)!=0) {
-					chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
 				}
 			}
 			if (range<2) {
@@ -1732,26 +1744,26 @@ void charts_makechart(uint32_t type,uint32_t range) {
 			text[2]=FDOT;
 			text[3]=xd/10;
 			text[4]=xd%10;
-			charts_puttext(XPOS+i+10,(YPOS+DATA)+4,COLOR_TEXT,text,5,XPOS-1,XPOS+LENG,0,YSIZE-1);
+			charts_puttext(XPOS+i+10,(YPOS+height)+4,COLOR_TEXT,text,5,XPOS,XPOS+width-1,0,MAXYSIZE-1);
 		}
 	} else {
 		xy = lngyear;
 		xm = lngmonth;
-//		k = LENG;
-		for (i=LENG-lngmday ; i>=0 ; ) {
+//		k = MAXLENG;
+		for (i=width-lngmday ; i>=0 ; ) {
 			text[0]=xm/10;
 			text[1]=xm%10;
-			charts_puttext(XPOS+i+(getmonleng(xy,xm)-11)/2+1,(YPOS+DATA)+4,COLOR_TEXT,text,2,XPOS-1,XPOS+LENG,0,YSIZE-1);
-			chart[(XSIZE)*(YPOS+DATA+1)+(i+XPOS)] = COLOR_AXIS;
-			chart[(XSIZE)*(YPOS+DATA+2)+(i+XPOS)] = COLOR_AXIS;
+			charts_puttext(XPOS+i+(getmonleng(xy,xm)-11)/2+1,(YPOS+height)+4,COLOR_TEXT,text,2,XPOS,XPOS+width-1,0,MAXYSIZE-1);
+			chart[(MAXXSIZE)*(YPOS+height+1)+(i+XPOS)] = COLOR_AXIS;
+			chart[(MAXXSIZE)*(YPOS+height+2)+(i+XPOS)] = COLOR_AXIS;
 			if (xm!=1) {
-				for (j=0 ; j<DATA ; j+=2) {
-					chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
+				for (j=0 ; j<(int32_t)height ; j+=2) {
+					chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
 				}
 			} else {
-				for (j=0 ; j<DATA ; j++) {
+				for (j=0 ; j<(int32_t)height ; j++) {
 					if ((j%4)!=0) {
-						chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
+						chart[(MAXXSIZE)*(j+YPOS)+(i+XPOS)] = COLOR_AUX;
 					}
 				}
 			}
@@ -1765,7 +1777,7 @@ void charts_makechart(uint32_t type,uint32_t range) {
 		}
 		text[0]=xm/10;
 		text[1]=xm%10;
-		charts_puttext(XPOS+i+(getmonleng(xy,xm)-11)/2+1,(YPOS+DATA)+4,COLOR_TEXT,text,2,XPOS-1,XPOS+LENG,0,YSIZE-1);
+		charts_puttext(XPOS+i+(getmonleng(xy,xm)-11)/2+1,(YPOS+height)+4,COLOR_TEXT,text,2,XPOS,XPOS+width-1,0,MAXYSIZE-1);
 	}
 	// y scale
 
@@ -1811,7 +1823,7 @@ void charts_makechart(uint32_t type,uint32_t range) {
 //			chart[(XSIZE)*(j+YPOS)+(i+XPOS)] = 2;
 //		}
 //	}
-	for (i=0 ; i<=5 ; i++) {
+	for (i=0 ; i<=(int32_t)ypts ; i++) {
 		d = base*i;
 		j=0;
 		if (mode==0) {	// ###
@@ -1823,13 +1835,19 @@ void charts_makechart(uint32_t type,uint32_t range) {
 				text[j++]=d/10;
 			}
 			text[j++]=d%10;
-		} else {	// ##.#
+		} else if (mode==1) {	// ##.#
 			if (d>=100) {
 				text[j++]=d/100;
 				d%=100;
 			}
 			text[j++]=d/10;
 			text[j++]=FDOT;
+			text[j++]=d%10;
+		} else if (mode==2) {   // #.##
+			text[j++]=d/100;
+			d%=100;
+			text[j++]=FDOT;
+			text[j++]=d/10;
 			text[j++]=d%10;
 		}
 		if (scale<11) {
@@ -1842,34 +1860,43 @@ void charts_makechart(uint32_t type,uint32_t range) {
 		if (percent) {
 			text[j++]=PERCENT;
 		}
-		charts_puttext(XPOS - 4 - (j*6),(YPOS+DATA-(20*i))-3,COLOR_TEXT,text,j,0,XSIZE-1,0,YSIZE-1);
-		chart[(XSIZE)*(YPOS+DATA-20*i)+(XPOS-2)] = COLOR_AXIS;
-		chart[(XSIZE)*(YPOS+DATA-20*i)+(XPOS-3)] = COLOR_AXIS;
+		charts_puttext(XPOS - 4 - (j*6),(YPOS+height-(20*i))-3,COLOR_TEXT,text,j,0,MAXXSIZE-1,0,MAXYSIZE-1);
+		chart[(MAXXSIZE)*(YPOS+height-20*i)+(XPOS-2)] = COLOR_AXIS;
+		chart[(MAXXSIZE)*(YPOS+height-20*i)+(XPOS-3)] = COLOR_AXIS;
 		if (i>0) {
-			for (j=1 ; j<LENG ; j+=2) {
-				chart[(XSIZE)*(YPOS+DATA-20*i)+(XPOS+j)] = COLOR_AUX;
+			for (j=1 ; j<(int32_t)width ; j+=2) {
+				chart[(MAXXSIZE)*(YPOS+height-20*i)+(XPOS+j)] = COLOR_AUX;
 			}
 		}
 	}
 }
 
-uint32_t charts_datasize(uint32_t number) {
+uint32_t charts_datasize(uint32_t number,uint32_t maxentries) {
 	uint32_t chtype,chrange;
 
 	chtype = number / 10;
 	chrange = number % 10;
-	return (chrange<RANGES && CHARTS_IS_DIRECT_STAT(chtype))?LENG*8+4:0;
+	if (maxentries>MAXLENG) {
+		maxentries = MAXLENG;
+	}
+	return (chrange<RANGES && CHARTS_IS_DIRECT_STAT(chtype))?maxentries*8+8:0;
 }
 
-void charts_makedata(uint8_t *buff,uint32_t number) {
-	uint32_t i,j,ts,pointer,chtype,chrange;
+void charts_makedata(uint8_t *buff,uint32_t number,uint32_t maxentries) {
+	uint32_t i,j,ts,chtype,chrange;
 	uint64_t *tab;
 
 	chtype = number / 10;
 	chrange = number % 10;
+	if (maxentries>MAXLENG) {
+		maxentries = MAXLENG;
+	}
 	if (chrange<RANGES && CHARTS_IS_DIRECT_STAT(chtype)) {
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_lock(&glock));
+#endif
 		tab = series[chtype][chrange];
-		pointer = pointers[chrange];
+		j = pointers[chrange] % MAXLENG;
 		ts = timepoint[chrange];
 		switch (chrange) {
 			case SHORTRANGE:
@@ -1886,31 +1913,33 @@ void charts_makedata(uint8_t *buff,uint32_t number) {
 				break;
 		}
 		put32bit(&buff,ts);
-		for (i=0 ; i<LENG ; i++) {
-			j = (LENG+1+pointer+i)%LENG;
+		put32bit(&buff,maxentries);
+		for (i=0 ; i<maxentries ; i++) {
 			put64bit(&buff,tab[j]);
+			if (j>0) {
+				j--;
+			} else {
+				j = MAXLENG-1;
+			}
 		}
+#ifdef USE_PTHREADS
+		zassert(pthread_mutex_unlock(&glock));
+#endif
 	}
 }
 
-void charts_chart_to_rawchart() {
+void charts_chart_to_rawchart(uint32_t chartwidth,uint32_t chartheight) {
 	uint32_t y;
-	uint32_t x;
+//	uint32_t x;
 	uint8_t *cp,*rp;
 	cp = chart;
 	rp = rawchart;
-	for (y=0 ; y<(YSIZE) ; y++) {
+	for (y=0 ; y<chartheight ; y++) {
 		*rp=0;
 		rp++;
-		for (x=0 ; x<(XSIZE) ; x+=2) {
-			if (x+1<(XSIZE)) {
-				*rp = ((*cp)<<4) | ((cp[1])&0x0F);
-			} else {
-				*rp = ((*cp)<<4);
-			}
-			rp++;
-			cp+=2;
-		}
+		memcpy(rp,cp,chartwidth);
+		rp+=chartwidth;
+		cp+=MAXXSIZE;
 	}
 }
 
@@ -1990,8 +2019,13 @@ int charts_fake_compress(uint8_t *src,uint32_t srcsize,uint8_t *dst,uint32_t *ds
 }
 #endif /* ! HAVE_ZLIB_H */
 
-uint32_t charts_make_png(uint32_t number) {
+uint32_t charts_make_png(uint32_t number,uint32_t chartwidth,uint32_t chartheight) {
 	uint32_t chtype,chrange;
+	uint8_t *ptr;
+
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_lock(&glock));
+#endif
 	chtype = number / 10;
 	chrange = number % 10;
 	if (chrange>=RANGES) {
@@ -2003,23 +2037,52 @@ uint32_t charts_make_png(uint32_t number) {
 		return sizeof(png_1x1);
 	}
 
-	charts_makechart(chtype,chrange);
-#ifndef HAVE_ZLIB_H
-	charts_putwarning(47,0,COLOR_TEXT);
+	if (chartwidth==0 && chartheight==0) {
+#if VERSMAJ==1
+		chartwidth = 1000;
+#else
+		chartwidth = 950+XADD;
 #endif
+		chartheight = 100+YADD;
+	}
+	if (chartheight>MAXHEIGHT+YADD) {
+		chartheight = MAXHEIGHT+YADD;
+	}
+	if (chartheight<MINHEIGHT+YADD) {
+		chartheight = MINHEIGHT+YADD;
+	}
+	if (((chartheight-YADD) % 20)!=0) {
+		chartheight -= ((chartheight-YADD) % 20);
+	}
+	if (chartwidth>MAXLENG+XADD) {
+		chartwidth = MAXLENG+XADD;
+	}
+	if (chartwidth<MINLENG+XADD) {
+		chartwidth = MINLENG+XADD;
+	}
 
-	charts_chart_to_rawchart();
+	charts_makechart(chtype,chrange,chartwidth-XADD,chartheight-YADD);
+#ifndef HAVE_ZLIB_H
+	charts_putwarning(XPOS+chartwidth-XADD-90,YPOS+5,COLOR_AXIS);
+#endif
+	charts_chart_to_rawchart(chartwidth,chartheight);
+
+	ptr = png_header+16;
+	put32bit(&ptr,chartwidth);
+	put32bit(&ptr,chartheight);
 
 #ifdef HAVE_ZLIB_H
 	if (deflateReset(&zstr)!=Z_OK) {
 		compsize = 0;
 		return sizeof(png_1x1);
 	}
+
+//	syslog(LOG_NOTICE,"rawchartsize: %u ; compbuffsize: %u",rawchartsize,compbuffsize);
 	zstr.next_in = rawchart;
-	zstr.avail_in = RAWSIZE;
+	zstr.avail_in = rawchartsize;
 	zstr.total_in = 0;
 	zstr.next_out = compbuff;
-	zstr.avail_out = CBUFFSIZE;
+	zstr.avail_out = compbuffsize;
 	zstr.total_out = 0;
 
 	if (deflate(&zstr,Z_FINISH)!=Z_STREAM_END) {
@@ -2029,8 +2092,8 @@ uint32_t charts_make_png(uint32_t number) {
 
 	compsize = zstr.total_out;
 #else /* HAVE_ZLIB_H */
-	compsize = CBUFFSIZE;
-	if (charts_fake_compress(rawchart,RAWSIZE,compbuff,&compsize)<0) {
+	compsize = compbuffsize;
+	if (charts_fake_compress(rawchart,rawchartsize,compbuff,&compsize)<0) {
 		compsize = 0;
 		return sizeof(png_1x1);
 	}
@@ -2052,4 +2115,7 @@ void charts_get_png(uint8_t *buff) {
 		charts_fill_crc(buff,sizeof(png_header)+compsize+sizeof(png_tailer));
 	}
 	compsize=0;
+#ifdef USE_PTHREADS
+	zassert(pthread_mutex_unlock(&glock));
+#endif
 }

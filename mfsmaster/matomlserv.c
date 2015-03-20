@@ -1,23 +1,22 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
+#include <stddef.h>
 #include <time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -30,47 +29,78 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <netinet/in.h>
+#ifdef HAVE_WRITEV
+#include <sys/uio.h>
+#endif
 
 #include "MFSCommunication.h"
 
 #include "datapack.h"
 #include "matomlserv.h"
+#include "changelog.h"
+#include "metadata.h"
 #include "crc.h"
 #include "cfg.h"
 #include "main.h"
 #include "sockets.h"
 #include "slogger.h"
 #include "massert.h"
+#include "clocks.h"
 
-#define MaxPacketSize 1500000
-#define OLD_CHANGES_BLOCK_SIZE 5000
+#define MaxPacketSize ANTOMA_MAXPACKETSIZE
+
+#define META_DL_BLOCK ((((MATOAN_MAXPACKETSIZE) - 1000) < 1000000) ? ((MATOAN_MAXPACKETSIZE) - 1000) : 1000000)
+
+#define OLD_CHANGES_GROUP_COUNT 10000
 
 // matomlserventry.mode
-enum{KILL,HEADER,DATA};
+enum{KILL,DATA,CLOSE};
 
-typedef struct packetstruct {
-	struct packetstruct *next;
+// matomlserventry.clienttype
+enum{UNKNOWN,METALOGGER};
+
+// matomlserventry.logstate
+enum{NONE,DELAYED,SYNC};
+
+typedef struct out_packetstruct {
+	struct out_packetstruct *next;
 	uint8_t *startptr;
 	uint32_t bytesleft;
-	uint8_t *packet;
-} packetstruct;
+	uint8_t data[1];
+} out_packetstruct;
+
+typedef struct in_packetstruct {
+	struct in_packetstruct *next;
+	uint32_t type,leng;
+	uint8_t data[1];
+} in_packetstruct;
 
 typedef struct matomlserventry {
 	uint8_t mode;
 	int sock;
 	int32_t pdescpos;
-	uint32_t lastread,lastwrite;
-	uint8_t hdrbuff[8];
-	packetstruct inputpacket;
-	packetstruct *outputhead,**outputtail;
+	double lastread,lastwrite;
+	uint8_t input_hdr[8];
+	uint8_t *input_startptr;
+	uint32_t input_bytesleft;
+	uint8_t input_end;
+	in_packetstruct *input_packet;
+	in_packetstruct *inputhead,**inputtail;
+	out_packetstruct *outputhead,**outputtail;
 
 	uint16_t timeout;
+	uint64_t next_log_version;
 
 	char *servstrip;		// human readable version of servip
 	uint32_t version;
 	uint32_t servip;
+	uint8_t clienttype;
+	uint8_t logstate;
 
-	int metafd,chain1fd,chain2fd;
+
+	int upload_meta_fd;
+	int upload_chain1_fd;
+	int upload_chain2_fd;
 
 	struct matomlserventry *next;
 } matomlserventry;
@@ -79,6 +109,7 @@ static matomlserventry *matomlservhead=NULL;
 static int lsock;
 static int32_t lsockpdescpos;
 
+/*
 typedef struct old_changes_entry {
 	uint64_t version;
 	uint32_t length;
@@ -95,12 +126,20 @@ typedef struct old_changes_block {
 
 static old_changes_block *old_changes_head=NULL;
 static old_changes_block *old_changes_current=NULL;
+*/
 
 // from config
 static char *ListenHost;
 static char *ListenPort;
-static uint16_t ChangelogSecondsToRemember;
+static uint32_t listenip;
+static uint16_t listenport;
 
+
+static uint32_t BackMetaCopies;
+
+// static uint16_t ChangelogSecondsToRemember;
+
+/*
 void matomlserv_old_changes_free_block(old_changes_block *oc) {
 	uint32_t i;
 	for (i=0 ; i<oc->entries ; i++) {
@@ -150,13 +189,30 @@ void matomlserv_store_logstring(uint64_t version,uint8_t *logstr,uint32_t logstr
 	memcpy(oce->data,logstr,logstrsize);
 	oc->entries++;
 }
+*/
+
+
+static inline const char* matomlserv_clientname(matomlserventry *eptr) {
+	switch (eptr->clienttype) {
+		case METALOGGER:
+			switch (eptr->logstate) {
+				case DELAYED:
+					return "METALOGGER-DELAYED";
+				case SYNC:
+					return "METALOGGER-SYNC";
+				default:
+					return "METALOGGER";
+			}
+	}
+	return "UNKNOWN";
+}
 
 uint32_t matomlserv_mloglist_size(void) {
 	matomlserventry *eptr;
 	uint32_t i;
 	i=0;
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->mode!=KILL) {
+		if (eptr->mode!=KILL && eptr->mode!=CLOSE && eptr->clienttype==METALOGGER) {
 			i++;
 		}
 	}
@@ -166,7 +222,7 @@ uint32_t matomlserv_mloglist_size(void) {
 void matomlserv_mloglist_data(uint8_t *ptr) {
 	matomlserventry *eptr;
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->mode!=KILL) {
+		if (eptr->mode!=KILL && eptr->mode!=CLOSE && eptr->clienttype==METALOGGER) {
 			put32bit(&ptr,eptr->version);
 			put32bit(&ptr,eptr->servip);
 		}
@@ -176,11 +232,11 @@ void matomlserv_mloglist_data(uint8_t *ptr) {
 void matomlserv_status(void) {
 	matomlserventry *eptr;
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->mode==HEADER || eptr->mode==DATA) {
+		if (eptr->mode==DATA) {
 			return;
 		}
 	}
-	syslog(LOG_WARNING,"no meta loggers connected !!!");
+	syslog(LOG_WARNING,"no metaloggers connected !!!");
 }
 
 char* matomlserv_makestrip(uint32_t ip) {
@@ -208,26 +264,49 @@ char* matomlserv_makestrip(uint32_t ip) {
 }
 
 uint8_t* matomlserv_createpacket(matomlserventry *eptr,uint32_t type,uint32_t size) {
-	packetstruct *outpacket;
+	out_packetstruct *outpacket;
 	uint8_t *ptr;
 	uint32_t psize;
 
-	outpacket=(packetstruct*)malloc(sizeof(packetstruct));
-	passert(outpacket);
 	psize = size+8;
-	outpacket->packet=malloc(psize);
-	passert(outpacket->packet);
+	outpacket=malloc(offsetof(out_packetstruct,data)+psize);
+	passert(outpacket);
 	outpacket->bytesleft = psize;
-	ptr = outpacket->packet;
+	ptr = outpacket->data;
 	put32bit(&ptr,type);
 	put32bit(&ptr,size);
-	outpacket->startptr = (uint8_t*)(outpacket->packet);
+	outpacket->startptr = outpacket->data;
 	outpacket->next = NULL;
 	*(eptr->outputtail) = outpacket;
 	eptr->outputtail = &(outpacket->next);
 	return ptr;
 }
 
+void matomlserv_send_old_change(void *veptr,uint64_t version,uint8_t *data,uint32_t length) {
+	matomlserventry *eptr = (matomlserventry *)veptr;
+	uint8_t *pdata;
+
+	pdata = matomlserv_createpacket(eptr,MATOAN_METACHANGES_LOG,9+length);
+	put8bit(&pdata,0xFF);
+	put64bit(&pdata,version);
+	memcpy(pdata,data,length);
+}
+
+/*
+void matomlserv_send_old_changes(matomlserventry *eptr,uint64_t version) {
+	uint64_t minver = changelog_get_minversion();
+	if (minver==0) {
+		// syslog(LOG_WARNING,"meta logger wants old changes, but storage is disabled");
+		return;
+	}
+	if (version<minver) {
+		syslog(LOG_WARNING,"meta logger wants changes since version: %"PRIu64", but minimal version in storage is: %"PRIu64,version,minver);
+		return;
+	}
+	changelog_get_old_changes(version,matomlserv_send_old_change,eptr);
+}
+*/
+/*
 void matomlserv_send_old_changes(matomlserventry *eptr,uint64_t version) {
 	old_changes_block *oc;
 	old_changes_entry *oce;
@@ -250,7 +329,7 @@ void matomlserv_send_old_changes(matomlserventry *eptr,uint64_t version) {
 			for (i=0 ; i<oc->entries ; i++) {
 				oce = oc->old_changes_block + i;
 				if (version>=oce->version) {
-					data = matomlserv_createpacket(eptr,MATOML_METACHANGES_LOG,9+oce->length);
+					data = matomlserv_createpacket(eptr,MATOAN_METACHANGES_LOG,9+oce->length);
 					put8bit(&data,0xFF);
 					put64bit(&data,oce->version);
 					memcpy(data,oce->data,oce->length);
@@ -259,119 +338,160 @@ void matomlserv_send_old_changes(matomlserventry *eptr,uint64_t version) {
 		}
 	}
 }
+*/
+
+
+void matomlserv_get_version(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
+	uint32_t msgid = 0;
+	uint8_t *ptr;
+	static const char vstring[] = VERSSTR;
+	if (length!=0 && length!=4) {
+		syslog(LOG_NOTICE,"ANTOAN_GET_VERSION - wrong size (%"PRIu32"/4|0)",length);
+		eptr->mode = KILL;
+		return;
+	}
+	if (length==4) {
+		msgid = get32bit(&data);
+		ptr = matomlserv_createpacket(eptr,ANTOAN_VERSION,4+4+strlen(vstring));
+		put32bit(&ptr,msgid);
+	} else {
+		ptr = matomlserv_createpacket(eptr,ANTOAN_VERSION,4+strlen(vstring));
+	}
+	put16bit(&ptr,VERSMAJ);
+	put8bit(&ptr,VERSMID);
+	put8bit(&ptr,VERSMIN);
+	memcpy(ptr,vstring,strlen(vstring));
+}
+
 
 void matomlserv_register(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint8_t rversion;
-	uint64_t minversion;
+	uint64_t req_minversion,chlog_minversion;
+	uint32_t n;
 
 	if (eptr->version>0) {
 		syslog(LOG_WARNING,"got register message from registered metalogger !!!");
-		eptr->mode=KILL;
+		eptr->mode = KILL;
 		return;
 	}
 	if (length<1) {
-		syslog(LOG_NOTICE,"MLTOMA_REGISTER - wrong size (%"PRIu32")",length);
-		eptr->mode=KILL;
+		syslog(LOG_NOTICE,"ANTOMA_REGISTER - wrong size (%"PRIu32")",length);
+		eptr->mode = KILL;
 		return;
 	} else {
 		rversion = get8bit(&data);
 		if (rversion==1) {
+			eptr->clienttype = METALOGGER;
 			if (length!=7) {
-				syslog(LOG_NOTICE,"MLTOMA_REGISTER (ver 1) - wrong size (%"PRIu32"/7)",length);
-				eptr->mode=KILL;
+				syslog(LOG_NOTICE,"ANTOMA_REGISTER (logger 1) - wrong size (%"PRIu32"/7)",length);
+				eptr->mode = KILL;
 				return;
 			}
 			eptr->version = get32bit(&data);
 			eptr->timeout = get16bit(&data);
+			eptr->logstate = SYNC;
 		} else if (rversion==2) {
+			eptr->clienttype = METALOGGER;
 			if (length!=7+8) {
-				syslog(LOG_NOTICE,"MLTOMA_REGISTER (ver 2) - wrong size (%"PRIu32"/15)",length);
-				eptr->mode=KILL;
+				syslog(LOG_NOTICE,"ANTOMA_REGISTER (logger 2) - wrong size (%"PRIu32"/15)",length);
+				eptr->mode = KILL;
 				return;
 			}
 			eptr->version = get32bit(&data);
 			eptr->timeout = get16bit(&data);
-			minversion = get64bit(&data);
-			matomlserv_send_old_changes(eptr,minversion);
+			req_minversion = get64bit(&data);
+			chlog_minversion = changelog_get_minversion();
+			if (chlog_minversion>0 && chlog_minversion<=req_minversion) {
+						n = changelog_get_old_changes(req_minversion,matomlserv_send_old_change,eptr,OLD_CHANGES_GROUP_COUNT);
+						if (n<OLD_CHANGES_GROUP_COUNT) {
+							eptr->logstate = SYNC;
+						} else {
+							eptr->next_log_version = req_minversion+n;
+							eptr->logstate = DELAYED;
+						}
+					} else {
+						eptr->logstate = SYNC; // desync
+					}
 		} else {
-			syslog(LOG_NOTICE,"MLTOMA_REGISTER - wrong version (%"PRIu8"/1)",rversion);
-			eptr->mode=KILL;
+			syslog(LOG_NOTICE,"ANTOMA_REGISTER - wrong version (%"PRIu8"/1)",rversion);
+			eptr->mode = KILL;
 			return;
 		}
 		if (eptr->timeout<10) {
-			syslog(LOG_NOTICE,"MLTOMA_REGISTER communication timeout too small (%"PRIu16" seconds - should be at least 10 seconds)",eptr->timeout);
+			syslog(LOG_NOTICE,"ANTOMA_REGISTER communication timeout too small (%"PRIu16" seconds - should be at least 10 seconds)",eptr->timeout);
 			if (eptr->timeout<3) {
 				eptr->timeout=3;
 			}
-//			eptr->mode=KILL;
+//			eptr->mode = KILL;
 			return;
 		}
 	}
 }
+
 
 void matomlserv_download_start(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint8_t filenum;
 	uint64_t size;
 	uint8_t *ptr;
 	if (length!=1) {
-		syslog(LOG_NOTICE,"MLTOMA_DOWNLOAD_START - wrong size (%"PRIu32"/1)",length);
-		eptr->mode=KILL;
+		syslog(LOG_NOTICE,"ANTOMA_DOWNLOAD_START - wrong size (%"PRIu32"/1)",length);
+		eptr->mode = KILL;
 		return;
 	}
 	filenum = get8bit(&data);
 	if (filenum==1 || filenum==2) {
-		if (eptr->metafd>=0) {
-			close(eptr->metafd);
-			eptr->metafd=-1;
+		if (eptr->upload_meta_fd>=0) {
+			close(eptr->upload_meta_fd);
+			eptr->upload_meta_fd=-1;
 		}
-		if (eptr->chain1fd>=0) {
-			close(eptr->chain1fd);
-			eptr->chain1fd=-1;
+		if (eptr->upload_chain1_fd>=0) {
+			close(eptr->upload_chain1_fd);
+			eptr->upload_chain1_fd=-1;
 		}
-		if (eptr->chain2fd>=0) {
-			close(eptr->chain2fd);
-			eptr->chain2fd=-1;
+		if (eptr->upload_chain2_fd>=0) {
+			close(eptr->upload_chain2_fd);
+			eptr->upload_chain2_fd=-1;
 		}
 	}
 	if (filenum==1) {
-		eptr->metafd = open("metadata.mfs.back",O_RDONLY);
-		eptr->chain1fd = open("changelog.0.mfs",O_RDONLY);
-		eptr->chain2fd = open("changelog.1.mfs",O_RDONLY);
+		eptr->upload_meta_fd = open("metadata.mfs.back",O_RDONLY);
+		eptr->upload_chain1_fd = open("changelog.0.mfs",O_RDONLY);
+		eptr->upload_chain2_fd = open("changelog.1.mfs",O_RDONLY);
 	} else if (filenum==2) {
-		eptr->metafd = open("sessions.mfs",O_RDONLY);
+		eptr->upload_meta_fd = open("sessions.mfs",O_RDONLY);
 	} else if (filenum==11) {
-		if (eptr->metafd>=0) {
-			close(eptr->metafd);
+		if (eptr->upload_meta_fd>=0) {
+			close(eptr->upload_meta_fd);
 		}
-		eptr->metafd = eptr->chain1fd;
-		eptr->chain1fd = -1;
+		eptr->upload_meta_fd = eptr->upload_chain1_fd;
+		eptr->upload_chain1_fd = -1;
 	} else if (filenum==12) {
-		if (eptr->metafd>=0) {
-			close(eptr->metafd);
+		if (eptr->upload_meta_fd>=0) {
+			close(eptr->upload_meta_fd);
 		}
-		eptr->metafd = eptr->chain2fd;
-		eptr->chain2fd = -1;
+		eptr->upload_meta_fd = eptr->upload_chain2_fd;
+		eptr->upload_chain2_fd = -1;
 	} else {
-		eptr->mode=KILL;
+		eptr->mode = KILL;
 		return;
 	}
-	if (eptr->metafd<0) {
+	if (eptr->upload_meta_fd<0) {
 		if (filenum==11 || filenum==12) {
-			ptr = matomlserv_createpacket(eptr,MATOML_DOWNLOAD_START,8);
+			ptr = matomlserv_createpacket(eptr,MATOAN_DOWNLOAD_INFO,8);
 			put64bit(&ptr,0);
 			return;
 		} else {
-			ptr = matomlserv_createpacket(eptr,MATOML_DOWNLOAD_START,1);
+			ptr = matomlserv_createpacket(eptr,MATOAN_DOWNLOAD_INFO,1);
 			put8bit(&ptr,0xff);	// error
 			return;
 		}
 	}
-	size = lseek(eptr->metafd,0,SEEK_END);
-	ptr = matomlserv_createpacket(eptr,MATOML_DOWNLOAD_START,8);
+	size = lseek(eptr->upload_meta_fd,0,SEEK_END);
+	ptr = matomlserv_createpacket(eptr,MATOAN_DOWNLOAD_INFO,8);
 	put64bit(&ptr,size);	// ok
 }
 
-void matomlserv_download_data(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
+void matomlserv_download_request(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
 	uint8_t *ptr;
 	uint64_t offset;
 	uint32_t leng;
@@ -379,29 +499,29 @@ void matomlserv_download_data(matomlserventry *eptr,const uint8_t *data,uint32_t
 	ssize_t ret;
 
 	if (length!=12) {
-		syslog(LOG_NOTICE,"MLTOMA_DOWNLOAD_DATA - wrong size (%"PRIu32"/12)",length);
-		eptr->mode=KILL;
+		syslog(LOG_NOTICE,"ANTOMA_DOWNLOAD_REQUEST - wrong size (%"PRIu32"/12)",length);
+		eptr->mode = KILL;
 		return;
 	}
-	if (eptr->metafd<0) {
-		syslog(LOG_NOTICE,"MLTOMA_DOWNLOAD_DATA - file not opened");
-		eptr->mode=KILL;
+	if (eptr->upload_meta_fd<0) {
+		syslog(LOG_NOTICE,"ANTOMA_DOWNLOAD_REQUEST - file not opened");
+		eptr->mode = KILL;
 		return;
 	}
 	offset = get64bit(&data);
 	leng = get32bit(&data);
-	ptr = matomlserv_createpacket(eptr,MATOML_DOWNLOAD_DATA,16+leng);
+	ptr = matomlserv_createpacket(eptr,MATOAN_DOWNLOAD_DATA,16+leng);
 	put64bit(&ptr,offset);
 	put32bit(&ptr,leng);
 #ifdef HAVE_PREAD
-	ret = pread(eptr->metafd,ptr+4,leng,offset);
+	ret = pread(eptr->upload_meta_fd,ptr+4,leng,offset);
 #else /* HAVE_PWRITE */
-	lseek(eptr->metafd,offset,SEEK_SET);
-	ret = read(eptr->metafd,ptr+4,leng);
+	lseek(eptr->upload_meta_fd,offset,SEEK_SET);
+	ret = read(eptr->upload_meta_fd,ptr+4,leng);
 #endif /* HAVE_PWRITE */
 	if (ret!=(ssize_t)leng) {
 		mfs_errlog_silent(LOG_NOTICE,"error reading metafile");
-		eptr->mode=KILL;
+		eptr->mode = KILL;
 		return;
 	}
 	crc = mycrc32(0,ptr+4,leng);
@@ -411,25 +531,24 @@ void matomlserv_download_data(matomlserventry *eptr,const uint8_t *data,uint32_t
 void matomlserv_download_end(matomlserventry *eptr,const uint8_t *data,uint32_t length) {
 	(void)data;
 	if (length!=0) {
-		syslog(LOG_NOTICE,"MLTOMA_DOWNLOAD_END - wrong size (%"PRIu32"/0)",length);
-		eptr->mode=KILL;
+		syslog(LOG_NOTICE,"ANTOMA_DOWNLOAD_END - wrong size (%"PRIu32"/0)",length);
+		eptr->mode = KILL;
 		return;
 	}
-	if (eptr->metafd>=0) {
-		close(eptr->metafd);
-		eptr->metafd=-1;
+	if (eptr->upload_meta_fd>=0) {
+		close(eptr->upload_meta_fd);
+		eptr->upload_meta_fd=-1;
 	}
 }
+
 
 void matomlserv_broadcast_logstring(uint64_t version,uint8_t *logstr,uint32_t logstrsize) {
 	matomlserventry *eptr;
 	uint8_t *data;
 
-	matomlserv_store_logstring(version,logstr,logstrsize);
-
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->version>0) {
-			data = matomlserv_createpacket(eptr,MATOML_METACHANGES_LOG,9+logstrsize);
+		if (eptr->version>0 && eptr->clienttype==METALOGGER && eptr->logstate==SYNC) {
+			data = matomlserv_createpacket(eptr,MATOAN_METACHANGES_LOG,9+logstrsize);
 			put8bit(&data,0xFF);
 			put64bit(&data,version);
 			memcpy(data,logstr,logstrsize);
@@ -442,25 +561,25 @@ void matomlserv_broadcast_logrotate() {
 	uint8_t *data;
 
 	for (eptr = matomlservhead ; eptr ; eptr=eptr->next) {
-		if (eptr->version>0) {
-			data = matomlserv_createpacket(eptr,MATOML_METACHANGES_LOG,1);
+		if (eptr->version>0 && eptr->clienttype==METALOGGER) {
+			data = matomlserv_createpacket(eptr,MATOAN_METACHANGES_LOG,1);
 			put8bit(&data,0x55);
 		}
 	}
 }
 
 void matomlserv_beforeclose(matomlserventry *eptr) {
-	if (eptr->metafd>=0) {
-		close(eptr->metafd);
-		eptr->metafd=-1;
+	if (eptr->upload_meta_fd>=0) {
+		close(eptr->upload_meta_fd);
+		eptr->upload_meta_fd=-1;
 	}
-	if (eptr->chain1fd>=0) {
-		close(eptr->chain1fd);
-		eptr->chain1fd=-1;
+	if (eptr->upload_chain1_fd>=0) {
+		close(eptr->upload_chain1_fd);
+		eptr->upload_chain1_fd=-1;
 	}
-	if (eptr->chain2fd>=0) {
-		close(eptr->chain2fd);
-		eptr->chain2fd=-1;
+	if (eptr->upload_chain2_fd>=0) {
+		close(eptr->upload_chain2_fd);
+		eptr->upload_chain2_fd=-1;
 	}
 }
 
@@ -472,172 +591,330 @@ void matomlserv_gotpacket(matomlserventry *eptr,uint32_t type,const uint8_t *dat
 			break;
 		case ANTOAN_BAD_COMMAND_SIZE: // for future use
 			break;
-		case MLTOMA_REGISTER:
+		case ANTOAN_GET_VERSION:
+			matomlserv_get_version(eptr,data,length);
+			break;
+		case ANTOMA_REGISTER:
 			matomlserv_register(eptr,data,length);
 			break;
-		case MLTOMA_DOWNLOAD_START:
+		case ANTOMA_DOWNLOAD_START:
 			matomlserv_download_start(eptr,data,length);
 			break;
-		case MLTOMA_DOWNLOAD_DATA:
-			matomlserv_download_data(eptr,data,length);
+		case ANTOMA_DOWNLOAD_REQUEST:
+			matomlserv_download_request(eptr,data,length);
 			break;
-		case MLTOMA_DOWNLOAD_END:
+		case ANTOMA_DOWNLOAD_END:
 			matomlserv_download_end(eptr,data,length);
 			break;
 		default:
-			syslog(LOG_NOTICE,"master <-> metaloggers module: got unknown message (type:%"PRIu32")",type);
-			eptr->mode=KILL;
-	}
-}
-
-void matomlserv_term(void) {
-	matomlserventry *eptr,*eaptr;
-	packetstruct *pptr,*paptr;
-	syslog(LOG_INFO,"master <-> metaloggers module: closing %s:%s",ListenHost,ListenPort);
-	tcpclose(lsock);
-
-	eptr = matomlservhead;
-	while (eptr) {
-		if (eptr->inputpacket.packet) {
-			free(eptr->inputpacket.packet);
-		}
-		pptr = eptr->outputhead;
-		while (pptr) {
-			if (pptr->packet) {
-				free(pptr->packet);
-			}
-			paptr = pptr;
-			pptr = pptr->next;
-			free(paptr);
-		}
-		eaptr = eptr;
-		eptr = eptr->next;
-		free(eaptr);
-	}
-	matomlservhead=NULL;
-
-	free(ListenHost);
-	free(ListenPort);
-}
-
-void matomlserv_read(matomlserventry *eptr) {
-	int32_t i;
-	uint32_t type,size;
-	const uint8_t *ptr;
-	for (;;) {
-		i=read(eptr->sock,eptr->inputpacket.startptr,eptr->inputpacket.bytesleft);
-		if (i==0) {
-			syslog(LOG_NOTICE,"connection with ML(%s) has been closed by peer",eptr->servstrip);
+			syslog(LOG_NOTICE,"master control module: got unknown message (type:%"PRIu32")",type);
 			eptr->mode = KILL;
-			return;
-		}
-		if (i<0) {
-			if (errno!=EAGAIN) {
-				mfs_arg_errlog_silent(LOG_NOTICE,"read from ML(%s) error",eptr->servstrip);
-				eptr->mode = KILL;
-			}
-			return;
-		}
-		eptr->inputpacket.startptr+=i;
-		eptr->inputpacket.bytesleft-=i;
-
-		if (eptr->inputpacket.bytesleft>0) {
-			return;
-		}
-
-		if (eptr->mode==HEADER) {
-			ptr = eptr->hdrbuff+4;
-			size = get32bit(&ptr);
-
-			if (size>0) {
-				if (size>MaxPacketSize) {
-					syslog(LOG_WARNING,"ML(%s) packet too long (%"PRIu32"/%u)",eptr->servstrip,size,MaxPacketSize);
-					eptr->mode = KILL;
-					return;
-				}
-				eptr->inputpacket.packet = malloc(size);
-				passert(eptr->inputpacket.packet);
-				eptr->inputpacket.bytesleft = size;
-				eptr->inputpacket.startptr = eptr->inputpacket.packet;
-				eptr->mode = DATA;
-				continue;
-			}
-			eptr->mode = DATA;
-		}
-
-		if (eptr->mode==DATA) {
-			ptr = eptr->hdrbuff;
-			type = get32bit(&ptr);
-			size = get32bit(&ptr);
-
-			eptr->mode=HEADER;
-			eptr->inputpacket.bytesleft = 8;
-			eptr->inputpacket.startptr = eptr->hdrbuff;
-
-			matomlserv_gotpacket(eptr,type,eptr->inputpacket.packet,size);
-
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
-			}
-			eptr->inputpacket.packet=NULL;
-		}
 	}
 }
 
-void matomlserv_write(matomlserventry *eptr) {
-	packetstruct *pack;
+void matomlserv_read(matomlserventry *eptr,double now) {
 	int32_t i;
+	uint32_t type,leng;
+	const uint8_t *ptr;
+	uint32_t rbleng,rbpos;
+	uint8_t err,hup;
+	static uint8_t *readbuff = NULL;
+	static uint32_t readbuffsize = 0;
+
+	if (eptr == NULL) {
+		if (readbuff != NULL) {
+			free(readbuff);
+		}
+		readbuff = NULL;
+		readbuffsize = 0;
+		return;
+	}
+
+	if (readbuffsize==0) {
+		readbuffsize = 65536;
+		readbuff = malloc(readbuffsize);
+		passert(readbuff);
+	}
+
+	rbleng = 0;
+	err = 0;
+	hup = 0;
 	for (;;) {
-		pack = eptr->outputhead;
-		if (pack==NULL) {
+		i = read(eptr->sock,readbuff+rbleng,readbuffsize-rbleng);
+		if (i==0) {
+			hup = 1;
+			break;
+		} else if (i<0) {
+			if (ERRNO_ERROR) {
+				err = 1;
+			}
+			break;
+		} else {
+			rbleng += i;
+			if (rbleng==readbuffsize) {
+				readbuffsize*=2;
+				readbuff = realloc(readbuff,readbuffsize);
+				passert(readbuff);
+			} else {
+				break;
+			}
+		}
+	}
+
+	if (rbleng>0) {
+		eptr->lastread = now;
+	}
+
+	rbpos = 0;
+	while (rbpos<rbleng) {
+		if ((rbleng-rbpos)>=eptr->input_bytesleft) {
+			memcpy(eptr->input_startptr,readbuff+rbpos,eptr->input_bytesleft);
+			i = eptr->input_bytesleft;
+		} else {
+			memcpy(eptr->input_startptr,readbuff+rbpos,rbleng-rbpos);
+			i = rbleng-rbpos;
+		}
+		rbpos += i;
+		eptr->input_startptr+=i;
+		eptr->input_bytesleft-=i;
+
+		if (eptr->input_bytesleft>0) {
+			break;
+		}
+
+		if (eptr->input_packet == NULL) {
+			ptr = eptr->input_hdr;
+			type = get32bit(&ptr);
+			leng = get32bit(&ptr);
+
+			if (leng>MaxPacketSize) {
+				syslog(LOG_WARNING,"ML(%s) packet too long (%"PRIu32"/%u)",eptr->servstrip,leng,MaxPacketSize);
+				eptr->input_end = 1;
+				return;
+			}
+
+			eptr->input_packet = malloc(offsetof(in_packetstruct,data)+leng);
+			passert(eptr->input_packet);
+			eptr->input_packet->next = NULL;
+			eptr->input_packet->type = type;
+			eptr->input_packet->leng = leng;
+
+			eptr->input_startptr = eptr->input_packet->data;
+			eptr->input_bytesleft = leng;
+		}
+
+		if (eptr->input_bytesleft>0) {
+			continue;
+		}
+
+		if (eptr->input_packet != NULL) {
+			*(eptr->inputtail) = eptr->input_packet;
+			eptr->inputtail = &(eptr->input_packet->next);
+			eptr->input_packet = NULL;
+			eptr->input_bytesleft = 8;
+			eptr->input_startptr = eptr->input_hdr;
+		}
+	}
+
+	if (hup) {
+		syslog(LOG_NOTICE,"connection with %s(%s) has been closed by peer",matomlserv_clientname(eptr),eptr->servstrip);
+		eptr->input_end = 1;
+	} else if (err) {
+		mfs_arg_errlog_silent(LOG_NOTICE,"read from ML(%s) error",eptr->servstrip);
+		eptr->input_end = 1;
+	}
+}
+
+void matomlserv_parse(matomlserventry *eptr) {
+	in_packetstruct *ipack;
+	uint64_t starttime;
+	uint64_t currtime;
+
+	starttime = monotonic_useconds();
+	currtime = starttime;
+	while (eptr->mode==DATA && (ipack = eptr->inputhead)!=NULL && starttime+10000>currtime) {
+		matomlserv_gotpacket(eptr,ipack->type,ipack->data,ipack->leng);
+		eptr->inputhead = ipack->next;
+		free(ipack);
+		if (eptr->inputhead==NULL) {
+			eptr->inputtail = &(eptr->inputhead);
+		} else {
+			currtime = monotonic_useconds();
+		}
+	}
+	if (eptr->mode==DATA && eptr->inputhead==NULL && eptr->input_end) {
+		eptr->mode = KILL;
+	}
+}
+
+void matomlserv_write(matomlserventry *eptr,double now) {
+	out_packetstruct *opack;
+	int32_t i;
+#ifdef HAVE_WRITEV
+	struct iovec iovtab[100];
+	uint32_t iovdata;
+	uint32_t leng;
+	uint32_t left;
+
+	for (;;) {
+		leng = 0;
+		for (iovdata=0,opack=eptr->outputhead ; iovdata<100 && opack!=NULL ; iovdata++,opack=opack->next) {
+			iovtab[iovdata].iov_base = opack->startptr;
+			iovtab[iovdata].iov_len = opack->bytesleft;
+			leng += opack->bytesleft;
+		}
+		if (iovdata==0) {
 			return;
 		}
-		i=write(eptr->sock,pack->startptr,pack->bytesleft);
+		i = writev(eptr->sock,iovtab,iovdata);
 		if (i<0) {
-			if (errno!=EAGAIN) {
+			if (ERRNO_ERROR) {
 				mfs_arg_errlog_silent(LOG_NOTICE,"write to ML(%s) error",eptr->servstrip);
 				eptr->mode = KILL;
 			}
 			return;
 		}
-		pack->startptr+=i;
-		pack->bytesleft-=i;
-		if (pack->bytesleft>0) {
+		if (i>0) {
+			eptr->lastwrite = now;
+		}
+		left = i;
+		while (left>0 && eptr->outputhead!=NULL) {
+			opack = eptr->outputhead;
+			if (opack->bytesleft>left) {
+				opack->startptr+=left;
+				opack->bytesleft-=left;
+				left = 0;
+			} else {
+				left -= opack->bytesleft;
+				eptr->outputhead = opack->next;
+				if (eptr->outputhead==NULL) {
+					eptr->outputtail = &(eptr->outputhead);
+				}
+				free(opack);
+			}
+		}
+		if ((uint32_t)i < leng) {
 			return;
 		}
-		free(pack->packet);
-		eptr->outputhead = pack->next;
+	}
+#else
+	for (;;) {
+		opack = eptr->outputhead;
+		if (opack==NULL) {
+			return;
+		}
+		i=write(eptr->sock,opack->startptr,opack->bytesleft);
+		if (i<0) {
+			if (ERRNO_ERROR) {
+				mfs_arg_errlog_silent(LOG_NOTICE,"write to ML(%s) error",eptr->servstrip);
+				eptr->mode = KILL;
+			}
+			return;
+		}
+		if (i>0) {
+			eptr->lastwrite = now;
+		}
+		opack->startptr+=i;
+		opack->bytesleft-=i;
+		if (opack->bytesleft>0) {
+			return;
+		}
+		eptr->outputhead = opack->next;
 		if (eptr->outputhead==NULL) {
 			eptr->outputtail = &(eptr->outputhead);
 		}
-		free(pack);
+		free(opack);
 	}
+#endif
 }
 
 void matomlserv_desc(struct pollfd *pdesc,uint32_t *ndesc) {
 	uint32_t pos = *ndesc;
+	int events;
 	matomlserventry *eptr;
 	pdesc[pos].fd = lsock;
 	pdesc[pos].events = POLLIN;
 	lsockpdescpos = pos;
 	pos++;
 	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
-		pdesc[pos].fd = eptr->sock;
-		pdesc[pos].events = POLLIN;
-		eptr->pdescpos = pos;
-		if (eptr->outputhead!=NULL) {
-			pdesc[pos].events |= POLLOUT;
+		events = 0;
+		if (eptr->input_end==0) {
+			events |= POLLIN;
 		}
-		pos++;
+		if (eptr->outputhead!=NULL) {
+			events |= POLLOUT;
+		}
+		if (events) {
+			pdesc[pos].fd = eptr->sock;
+			pdesc[pos].events = POLLIN;
+			eptr->pdescpos = pos;
+			pos++;
+		} else {
+			eptr->pdescpos = -1;
+		}
 	}
 	*ndesc = pos;
 }
 
-void matomlserv_serve(struct pollfd *pdesc) {
-	uint32_t now=main_time();
+void matomlserv_disconnection_loop(void) {
 	matomlserventry *eptr,**kptr;
-	packetstruct *pptr,*paptr;
+	in_packetstruct *ipptr,*ipaptr;
+	out_packetstruct *opptr,*opaptr;
+
+	kptr = &matomlservhead;
+	while ((eptr=*kptr)) {
+		if (eptr->mode==KILL || eptr->mode==CLOSE) {
+			matomlserv_beforeclose(eptr);
+			if (eptr->mode==KILL) {
+				tcpclose(eptr->sock);
+			} else {
+				close(eptr->sock);
+			}
+			if (eptr->input_packet) {
+				free(eptr->input_packet);
+			}
+			ipptr = eptr->inputhead;
+			while (ipptr) {
+				ipaptr = ipptr;
+				ipptr = ipptr->next;
+				free(ipaptr);
+			}
+			opptr = eptr->outputhead;
+			while (opptr) {
+				opaptr = opptr;
+				opptr = opptr->next;
+				free(opaptr);
+			}
+			if (eptr->servstrip) {
+				free(eptr->servstrip);
+			}
+			*kptr = eptr->next;
+			free(eptr);
+		} else {
+			kptr = &(eptr->next);
+		}
+	}
+}
+
+void matomlserv_serve(struct pollfd *pdesc) {
+	double now;
+	matomlserventry *eptr;
 	int ns;
+	static double lastaction = 0.0;
+	double timeoutadd;
+	uint32_t n;
+
+	now = monotonic_seconds();
+// timeout fix
+	if (lastaction>0.0) {
+		timeoutadd = now-lastaction;
+		if (timeoutadd>1.0) {
+			for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+				eptr->lastread += timeoutadd;
+			}
+		}
+	}
+	lastaction = now;
 
 	if (lsockpdescpos>=0 && (pdesc[lsockpdescpos].revents & POLLIN)) {
 		ns=tcpaccept(lsock);
@@ -652,82 +929,166 @@ void matomlserv_serve(struct pollfd *pdesc) {
 			matomlservhead = eptr;
 			eptr->sock = ns;
 			eptr->pdescpos = -1;
-			eptr->mode = HEADER;
+			eptr->mode = DATA;
 			eptr->lastread = now;
 			eptr->lastwrite = now;
-			eptr->inputpacket.next = NULL;
-			eptr->inputpacket.bytesleft = 8;
-			eptr->inputpacket.startptr = eptr->hdrbuff;
-			eptr->inputpacket.packet = NULL;
+			eptr->input_bytesleft = 8;
+			eptr->input_startptr = eptr->input_hdr;
+			eptr->input_end = 0;
+			eptr->input_packet = NULL;
+			eptr->inputhead = NULL;
+			eptr->inputtail = &(eptr->inputhead);
 			eptr->outputhead = NULL;
 			eptr->outputtail = &(eptr->outputhead);
 			eptr->timeout = 10;
 
 			tcpgetpeer(eptr->sock,&(eptr->servip),NULL);
 			eptr->servstrip = matomlserv_makestrip(eptr->servip);
-			eptr->version=0;
-			eptr->metafd=-1;
-			eptr->chain1fd=-1;
-			eptr->chain2fd=-1;
+			eptr->version = 0;
+			eptr->clienttype = UNKNOWN;
+			eptr->logstate = NONE;
+			eptr->upload_meta_fd = -1;
+			eptr->upload_chain1_fd = -1;
+			eptr->upload_chain2_fd = -1;
 		}
 	}
+
+// read
 	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
 		if (eptr->pdescpos>=0) {
+			if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode!=KILL) {
+				matomlserv_read(eptr,now);
+			}
 			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
-				eptr->mode = KILL;
-			}
-			if ((pdesc[eptr->pdescpos].revents & POLLIN) && eptr->mode!=KILL) {
-				eptr->lastread = now;
-				matomlserv_read(eptr);
-			}
-			if ((pdesc[eptr->pdescpos].revents & POLLOUT) && eptr->mode!=KILL) {
-				eptr->lastwrite = now;
-				matomlserv_write(eptr);
+				eptr->input_end = 1;
 			}
 		}
-		if ((uint32_t)(eptr->lastread+eptr->timeout)<(uint32_t)now) {
-			eptr->mode = KILL;
-		}
-		if ((uint32_t)(eptr->lastwrite+(eptr->timeout/3))<(uint32_t)now && eptr->outputhead==NULL) {
+		matomlserv_parse(eptr);
+	}
+
+// write
+	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+		if ((eptr->lastwrite+(eptr->timeout/3.0))<now && eptr->outputhead==NULL) {
 			matomlserv_createpacket(eptr,ANTOAN_NOP,0);
 		}
+		if (eptr->pdescpos>=0) {
+			if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && eptr->mode!=KILL) {
+				matomlserv_write(eptr,now);
+			}
+		}
+		if ((eptr->lastread+eptr->timeout)<now) {
+			eptr->mode = KILL;
+		}
+		if (eptr->logstate==DELAYED && eptr->outputhead==NULL) {
+			n = changelog_get_old_changes(eptr->next_log_version,matomlserv_send_old_change,eptr,OLD_CHANGES_GROUP_COUNT);
+			if (n<OLD_CHANGES_GROUP_COUNT) {
+				eptr->logstate=SYNC;
+			} else {
+				eptr->next_log_version += n;
+			}
+		}
 	}
-	kptr = &matomlservhead;
-	while ((eptr=*kptr)) {
-		if (eptr->mode == KILL) {
-			matomlserv_beforeclose(eptr);
-			tcpclose(eptr->sock);
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
-			}
-			pptr = eptr->outputhead;
-			while (pptr) {
-				if (pptr->packet) {
-					free(pptr->packet);
-				}
-				paptr = pptr;
-				pptr = pptr->next;
-				free(paptr);
-			}
-			if (eptr->servstrip) {
-				free(eptr->servstrip);
-			}
-			*kptr = eptr->next;
-			free(eptr);
-		} else {
-			kptr = &(eptr->next);
+	matomlserv_disconnection_loop();
+}
+
+void matomlserv_keep_alive(void) {
+	double now;
+	matomlserventry *eptr;
+
+	now = monotonic_seconds();
+// read
+	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+		if (eptr->mode == DATA && eptr->input_end==0) {
+			matomlserv_read(eptr,now);
+		}
+	}
+// write
+	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+		if ((eptr->lastwrite+(eptr->timeout/3.0))<now && eptr->outputhead==NULL) {
+			matomlserv_createpacket(eptr,ANTOAN_NOP,0);
+		}
+		if (eptr->mode == DATA && eptr->outputhead) {
+			matomlserv_write(eptr,now);
 		}
 	}
 }
 
+void matomlserv_term(void) {
+	matomlserventry *eptr,*eaptr;
+	in_packetstruct *ipptr,*ipaptr;
+	out_packetstruct *opptr,*opaptr;
+	syslog(LOG_INFO,"master control module: closing %s:%s",ListenHost,ListenPort);
+	tcpclose(lsock);
+
+	eptr = matomlservhead;
+	while (eptr) {
+		if (eptr->input_packet) {
+			free(eptr->input_packet);
+		}
+		ipptr = eptr->inputhead;
+		while (ipptr) {
+			ipaptr = ipptr;
+			ipptr = ipptr->next;
+			free(ipaptr);
+		}
+		opptr = eptr->outputhead;
+		while (opptr) {
+			opaptr = opptr;
+			opptr = opptr->next;
+			free(opaptr);
+		}
+		eaptr = eptr;
+		eptr = eptr->next;
+		free(eaptr);
+	}
+	matomlservhead=NULL;
+
+	matomlserv_read(NULL,0.0); // free internal read buffer
+
+	free(ListenHost);
+	free(ListenPort);
+}
+
+int matomlserv_no_more_pending_jobs(void) {
+	matomlserventry *eptr;
+	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+		if (eptr->outputhead!=NULL) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+void matomlserv_disconnect_all(void) {
+	matomlserventry *eptr;
+	for (eptr=matomlservhead ; eptr ; eptr=eptr->next) {
+		eptr->mode = KILL;
+	}
+	matomlserv_disconnection_loop();
+}
+
+uint16_t matomlserv_getport(void) {
+	return listenport;
+}
+
 void matomlserv_reload(void) {
 	char *oldListenHost,*oldListenPort;
+	uint32_t oldlistenip;
+	uint16_t oldlistenport;
 	int newlsock;
+
+	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",1);
+	if (BackMetaCopies>99) {
+		BackMetaCopies=99;
+	}
 
 	oldListenHost = ListenHost;
 	oldListenPort = ListenPort;
+	oldlistenip = listenip;
+	oldlistenport = listenport;
+
 	ListenHost = cfg_getstr("MATOML_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOML_LISTEN_PORT","9419");
+	ListenPort = cfg_getstr("MATOML_LISTEN_PORT",DEFAULT_MASTER_CONTROL_PORT);
 	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
 		free(oldListenHost);
 		free(oldListenPort);
@@ -750,12 +1111,25 @@ void matomlserv_reload(void) {
 	if (tcpsetacceptfilter(newlsock)<0 && errno!=ENOTSUP) {
 		mfs_errlog_silent(LOG_NOTICE,"master <-> metaloggers module: can't set accept filter");
 	}
-	if (tcpstrlisten(newlsock,ListenHost,ListenPort,100)<0) {
+	if (tcpresolve(ListenHost,ListenPort,&listenip,&listenport,1)<0) {
+		mfs_arg_errlog(LOG_ERR,"master <-> metaloggers module: socket address has changed, but can't be resolved (%s:%s)",ListenHost,ListenPort);
+		free(ListenHost);
+		free(ListenPort);
+		ListenHost = oldListenHost;
+		ListenPort = oldListenPort;
+		listenip = oldlistenip;
+		listenport = oldlistenport;
+		tcpclose(newlsock);
+		return;
+	}
+	if (tcpnumlisten(newlsock,listenip,listenport,100)<0) {
 		mfs_arg_errlog(LOG_ERR,"master <-> metaloggers module: socket address has changed, but can't listen on socket (%s:%s)",ListenHost,ListenPort);
 		free(ListenHost);
 		free(ListenPort);
 		ListenHost = oldListenHost;
 		ListenPort = oldListenPort;
+		listenip = oldlistenip;
+		listenport = oldlistenport;
 		tcpclose(newlsock);
 		return;
 	}
@@ -765,16 +1139,21 @@ void matomlserv_reload(void) {
 	tcpclose(lsock);
 	lsock = newlsock;
 
-	ChangelogSecondsToRemember = cfg_getuint16("MATOML_LOG_PRESERVE_SECONDS",600);
-	if (ChangelogSecondsToRemember>3600) {
-		syslog(LOG_WARNING,"Number of seconds of change logs to be preserved in master is too big (%"PRIu16") - decreasing to 3600 seconds",ChangelogSecondsToRemember);
-		ChangelogSecondsToRemember=3600;
-	}
+//	ChangelogSecondsToRemember = cfg_getuint16("MATOAN_LOG_PRESERVE_SECONDS",600);
+//	if (ChangelogSecondsToRemember>3600) {
+//		syslog(LOG_WARNING,"Number of seconds of change logs to be preserved in master is too big (%"PRIu16") - decreasing to 3600 seconds",ChangelogSecondsToRemember);
+//		ChangelogSecondsToRemember=3600;
+//	}
 }
 
 int matomlserv_init(void) {
+	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",1);
+	if (BackMetaCopies>99) {
+		BackMetaCopies=99;
+	}
+
 	ListenHost = cfg_getstr("MATOML_LISTEN_HOST","*");
-	ListenPort = cfg_getstr("MATOML_LISTEN_PORT","9419");
+	ListenPort = cfg_getstr("MATOML_LISTEN_PORT",DEFAULT_MASTER_CONTROL_PORT);
 
 	lsock = tcpsocket();
 	if (lsock<0) {
@@ -787,21 +1166,26 @@ int matomlserv_init(void) {
 	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
 		mfs_errlog_silent(LOG_NOTICE,"master <-> metaloggers module: can't set accept filter");
 	}
-	if (tcpstrlisten(lsock,ListenHost,ListenPort,100)<0) {
+	if (tcpresolve(ListenHost,ListenPort,&listenip,&listenport,1)<0) {
+		mfs_arg_errlog(LOG_ERR,"master <-> metaloggers module: can't resolve %s:%s",ListenHost,ListenPort);
+		return -1;
+	}
+	if (tcpnumlisten(lsock,listenip,listenport,100)<0) {
 		mfs_arg_errlog(LOG_ERR,"master <-> metaloggers module: can't listen on %s:%s",ListenHost,ListenPort);
 		return -1;
 	}
 	mfs_arg_syslog(LOG_NOTICE,"master <-> metaloggers module: listen on %s:%s",ListenHost,ListenPort);
 
 	matomlservhead = NULL;
-	ChangelogSecondsToRemember = cfg_getuint16("MATOML_LOG_PRESERVE_SECONDS",600);
-	if (ChangelogSecondsToRemember>3600) {
-		syslog(LOG_WARNING,"Number of seconds of change logs to be preserved in master is too big (%"PRIu16") - decreasing to 3600 seconds",ChangelogSecondsToRemember);
-		ChangelogSecondsToRemember=3600;
-	}
-	main_reloadregister(matomlserv_reload);
-	main_destructregister(matomlserv_term);
-	main_pollregister(matomlserv_desc,matomlserv_serve);
-	main_timeregister(TIMEMODE_SKIP_LATE,3600,0,matomlserv_status);
+//	ChangelogSecondsToRemember = cfg_getuint16("MATOAN_LOG_PRESERVE_SECONDS",600);
+//	if (ChangelogSecondsToRemember>3600) {
+//		syslog(LOG_WARNING,"Number of seconds of change logs to be preserved in master is too big (%"PRIu16") - decreasing to 3600 seconds",ChangelogSecondsToRemember);
+//		ChangelogSecondsToRemember=3600;
+//	}
+	main_reload_register(matomlserv_reload);
+	main_destruct_register(matomlserv_term);
+	main_poll_register(matomlserv_desc,matomlserv_serve);
+	main_keepalive_register(matomlserv_keep_alive);
+	main_time_register(3600,0,matomlserv_status);
 	return 0;
 }

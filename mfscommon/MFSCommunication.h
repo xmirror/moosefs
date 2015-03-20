@@ -1,19 +1,15 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
 #ifndef _MFS_COMMUNICATION_H_
@@ -25,7 +21,11 @@
 //
 
 #ifndef PROTO_BASE
-#include "config.h"
+# ifdef HAVE_CONFIG_H
+#  include "config.h"
+# else
+#  define PROTO_BASE 0
+# endif
 #endif
 
 #define MFSBLOCKSINCHUNK 0x400
@@ -63,6 +63,9 @@
 #define MFS_ROOT_ID 1
 
 #define MFS_NAME_MAX 255
+#define MFS_SYMLINK_MAX 1024
+#define MFS_PATH_MAX 1024
+
 #define MFS_MAX_FILE_SIZE (((uint64_t)(MFSCHUNKSIZE))<<31)
 
 #define MFS_INODE_REUSE_DELAY 86400
@@ -115,7 +118,12 @@
 #define ERROR_ENOTSUP         39        // Operation not supported
 #define ERROR_ERANGE          40        // Result too large
 
-#define ERROR_MAX             41
+#define ERROR_NOTFOUND        41        // Entity not found
+#define ERROR_ACTIVE          42        // Entity is active
+
+#define ERROR_CSNOTPRESENT    43        // Chunkserver not present
+
+#define ERROR_MAX             44
 
 #define ERROR_STRINGS \
 	"OK", \
@@ -159,20 +167,35 @@
 	"Attribute not found", \
 	"Operation not supported", \
 	"Result too large", \
+	"Entity not found", \
+	"Entity is active", \
+	"Chunkserver not present", \
 	"Unknown MFS error"
 
 /* type for readdir command */
-#define TYPE_FILE             'f'
-#define TYPE_DIRECTORY        'd'
-#define TYPE_SYMLINK          'l'
-#define TYPE_FIFO             'q'
-#define TYPE_BLOCKDEV         'b'
-#define TYPE_CHARDEV          'c'
-#define TYPE_SOCKET           's'
+#define DISP_TYPE_FILE         'f'
+#define DISP_TYPE_DIRECTORY    'd'
+#define DISP_TYPE_SYMLINK      'l'
+#define DISP_TYPE_FIFO         'q'
+#define DISP_TYPE_BLOCKDEV     'b'
+#define DISP_TYPE_CHARDEV      'c'
+#define DISP_TYPE_SOCKET       's'
 // 't' and 'r' are only for internal master use - they are in readdir shown as 'f'
-#define TYPE_TRASH            't'
-#define TYPE_RESERVED         'r'
-#define TYPE_UNKNOWN          '?'
+#define DISP_TYPE_TRASH        't'
+#define DISP_TYPE_SUSTAINED    'r'
+#define DISP_TYPE_UNKNOWN      '?'
+
+#define DISP_TYPE_REMAP_STR    "?fdlqbcstr??????"
+
+#define TYPE_FILE              1
+#define TYPE_DIRECTORY         2
+#define TYPE_SYMLINK           3
+#define TYPE_FIFO              4
+#define TYPE_BLOCKDEV          5
+#define TYPE_CHARDEV           6
+#define TYPE_SOCKET            7
+#define TYPE_TRASH             8
+#define TYPE_SUSTAINED         9
 
 // mode mask:  "modemask" field in "CLTOMA_FUSE_ACCESS"
 #define MODE_MASK_R            4
@@ -198,7 +221,7 @@
 // dtypes:
 #define DTYPE_UNKNOWN          0
 #define DTYPE_TRASH            1
-#define DTYPE_RESERVED         2
+#define DTYPE_SUSTAINED        2
 #define DTYPE_ISVALID(x)       (((uint32_t)(x))<=2)
 
 // smode:
@@ -242,7 +265,7 @@
 #define MATTR_NOACACHE         0x01
 #define MATTR_NOECACHE         0x02
 #define MATTR_ALLOWDATACACHE   0x04
-#define MATTR_UNDEFINED        0x08
+#define MATTR_NOXATTR          0x08
 
 // quota:
 #define QUOTA_FLAG_SINODES     0x01
@@ -256,6 +279,10 @@
 #define QUOTA_FLAG_HREALSIZE   0x80
 #define QUOTA_FLAG_HALL        0xF0
 
+// acl:
+#define POSIX_ACL_ACCESS       1
+#define POSIX_ACL_DEFAULT      2
+
 // getdir:
 #define GETDIR_FLAG_WITHATTR   0x01
 #define GETDIR_FLAG_ADDTOCACHE 0x02
@@ -264,18 +291,22 @@
 #define SESFLAG_READONLY       0x01	// meaning is obvious
 #define SESFLAG_DYNAMICIP      0x02	// sessionid can be used by any IP - dangerous for high privileged sessions - one could connect from different computer using stolen session id
 #define SESFLAG_IGNOREGID      0x04	// gid is ignored during access testing (when user id is different from object's uid then or'ed 'group' and 'other' rights are used)
-#define SESFLAG_CANCHANGEQUOTA 0x08	// quota can be set and deleted
+#define SESFLAG_ADMIN          0x08	// extra permissions (currently only used for quotas - quota can be set and deleted)
 #define SESFLAG_MAPALL         0x10	// all users (except root) are mapped to specific uid and gid
+
+#define SESFLAG_ATTRBIT        0x40	// client can understand new attr record (ver >= 1.7.29)
+
+#define SESFLAG_METARESTORE    0x80	// this is metarestore session
 
 #define SESFLAG_POS_STRINGS \
 	"read-only", \
 	"not_restricted_ip", \
 	"ignore_gid", \
-	"can_change_quota", \
+	"admin", \
 	"map_all", \
 	"undefined_flag_5", \
-	"undefined_flag_6", \
-	"undefined_flag_7"
+	"reserved (attr bit)", \
+	"reserved (metarestore)"
 
 #define SESFLAG_NEG_STRINGS \
 	"read-write", \
@@ -305,6 +336,8 @@
 	"ext", \
 	"xfs"
 
+#define SNAPSHOT_MODE_CAN_OVERWRITE 1
+#define SNAPSHOT_MODE_CPLIKE_ATTR 2
 
 // flags: "flags" fileld in "CLTOMA_FUSE_AQUIRE"
 #define WANT_READ 1
@@ -320,18 +353,40 @@
 #define MFS_XATTR_GETA_DATA 0
 #define MFS_XATTR_LENGTH_ONLY 1
 
+#define MFS_CSSERV_COMMAND_REMOVE 0
+#define MFS_CSSERV_COMMAND_BACKTOWORK 1
+#define MFS_CSSERV_COMMAND_MAINTENANCEON 2
+#define MFS_CSSERV_COMMAND_MAINTENANCEOFF 3
+
+#define MFS_SESSION_COMMAND_REMOVE 0
+
 // MFS uses Linux limits
 #define MFS_XATTR_NAME_MAX 255
 #define MFS_XATTR_SIZE_MAX 65536
 #define MFS_XATTR_LIST_MAX 65536
 
+#define MODULE_TYPE_UNKNOWN 0
+#define MODULE_TYPE_MASTER 1
+#define MODULE_TYPE_CHUNKSERVER 2
+
+
+
+#define CSTOMA_MAXPACKETSIZE 500000000
+#define CLTOMA_MAXPACKETSIZE 1000000
+#define ANTOMA_MAXPACKETSIZE 1500000
+#define MATOAN_MAXPACKETSIZE 1500000
+#define MATOCS_MAXPACKETSIZE 10000
+#define CSTOCS_MAXPACKETSIZE 100000
+#define CLTOCS_MAXPACKETSIZE 100000
+#define ANTOCS_MAXPACKETSIZE 100000
+#define CSTOCL_MAXPACKETSIZE 100000
 
 // ANY <-> ANY
 
 #define ANTOAN_NOP 0
 // [msgid:32] (msgid - only in communication from master to client)
 
-// these packets are acceptable since version 1.6.27 (but treated as NOP in this version)
+// these packets are acceptable since version 1.6.27 (but not send)
 #define ANTOAN_UNKNOWN_COMMAND 1
 // [msgid:32] cmdno:32 size:32 version:32 (msgid - only in communication from master to client)
 
@@ -339,43 +394,50 @@
 // [msgid:32] cmdno:32 size:32 version:32 (msgid - only in communication from master to client)
 
 
+#define ANTOAN_GET_VERSION 10
+// [msgid:32]
 
-// METALOGGER <-> MASTER
+#define ANTOAN_VERSION 11
+// [msgid:32] version:32 strversion:string ( N*[ char:8 ] )
+
+
+// METALOGGERS/MASTERS/MANAGERS <-> MASTER
 
 // 0x0032
-#define MLTOMA_REGISTER (PROTO_BASE+50)
+#define ANTOMA_REGISTER (PROTO_BASE+50)
 // rver:8
 // 	rver==1:
-// 		version:32 timeout:16
+// 		( rver:8 ) version:32 timeout:16
 
 // 0x0033
-#define MATOML_METACHANGES_LOG (PROTO_BASE+51)
+#define MATOAN_METACHANGES_LOG (PROTO_BASE+51)
+// maxsize=250000
 // 0xFF:8 version:64 logdata:string ( N*[ char:8 ] ) = LOG_DATA
 // 0x55:8 = LOG_ROTATE
 
+
 // 0x003C
-#define MLTOMA_DOWNLOAD_START (PROTO_BASE+60)
+#define ANTOMA_DOWNLOAD_START (PROTO_BASE+60)
 // -
+// filenum:8
 
 // 0x003D
-#define MATOML_DOWNLOAD_START (PROTO_BASE+61)
+#define MATOAN_DOWNLOAD_INFO (PROTO_BASE+61)
 // status:8
 // length:64
 
 // 0x003E
-#define MLTOMA_DOWNLOAD_DATA (PROTO_BASE+62)
+#define ANTOMA_DOWNLOAD_REQUEST (PROTO_BASE+62)
 // offset:64 leng:32
 
 // 0x003F
-#define MATOML_DOWNLOAD_DATA (PROTO_BASE+63)
+#define MATOAN_DOWNLOAD_DATA (PROTO_BASE+63)
+// maxsize=2000000
 // offset:64 leng:32 crc:32 data:lengB
 
 // 0x0040
-#define MLTOMA_DOWNLOAD_END (PROTO_BASE+64)
+#define ANTOMA_DOWNLOAD_END (PROTO_BASE+64)
 // -
-
-
-
 
 
 // CHUNKSERVER <-> MASTER
@@ -387,20 +449,27 @@
 // - version 1-4:
 // rver:8
 // 	rver==1:
-// 		myip:32 myport:16 usedspace:64 totalspace:64 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
+// 		( rver:8 ) myip:32 myport:16 usedspace:64 totalspace:64 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
 // 	rver==2:
-// 		myip:32 myport:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
+// 		( rver:8 ) myip:32 myport:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
 // 	rver==3:
-// 		myip:32 myport:16 tpctimeout:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
+// 		( rver:8 ) myip:32 myport:16 tpctimeout:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
 // 	rver==4:
-// 		version:32 myip:32 myport:16 tcptimeout:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
+// 		( rver:8 ) version:32 myip:32 myport:16 tcptimeout:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32 N*[ chunkid:64 version:32 ]
 // - version 5:
 //      rver==50:	// version 5 / BEGIN
-//      	version:32 myip:32 myport:16 tcptimeout:16
+//      	( rver:8 ) version:32 myip:32 myport:16 tcptimeout:16
 //      rver==51:	// version 5 / CHUNKS
-//      	N*[chunkid:64 version:32]
+//      	( rver:8 ) N*[chunkid:64 version:32]
 //      rver==52:	// version 5 / END
-//      	usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32
+//      	( rver:8 ) usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32
+// - version 6:
+//	rver==60:	// version 6 / BEGIN
+//		( rver:8 ) version:32 myip:32 myport:16 tcptimeout:16 csid:16 usedspace:64 totalspace:64 chunks:32 tdusedspace:64 tdtotalspace:64 tdchunks:32
+//	rver==61:	// version 6 / CHUNKS
+//		( rver:8 ) N*[chunkid:64 version:32]
+//	rver==62:	// version 6 / END
+//		( rver:8 ) -
 
 // 0x0065
 #define CSTOMA_SPACE (PROTO_BASE+101)
@@ -416,10 +485,17 @@
 // #define MATOCS_STRUCTURE_LOG (PROTO_BASE+103)
 // version:32 logdata:string ( N*[ char:8 ] )
 // 0xFF:8 version:64 logdata:string ( N*[ char:8 ] )
+// since version 1.6.28:
+#define CSTOMA_CURRENT_LOAD (PROTO_BASE+103)
+// load:32
 
 // 0x0068
 // #define MATOCS_STRUCTURE_LOG_ROTATE (PROTO_BASE+104)
-// -
+// since version 1.6.28:
+#define MATOCS_MASTER_ACK (PROTO_BASE+104)
+// atype:8 master_version:32
+// atype:8 master_version:32 tcptimeout:16 csid:16
+// atype:8 master_version:32 tcptimeout:16 csid:16 metadataid:64 (both versions >= 2.0.33)
 
 // 0x0069
 #define CSTOMA_CHUNK_LOST (PROTO_BASE+105)
@@ -432,6 +508,7 @@
 // 0x006B
 #define CSTOMA_CHUNK_NEW (PROTO_BASE+107)
 // N*[ chunkid:64 version:32 ]
+
 
 // 0x006E
 #define MATOCS_CREATE (PROTO_BASE+110)
@@ -517,6 +594,7 @@
 // 0x00C8
 #define CLTOCS_READ (PROTO_BASE+200)
 // chunkid:64 version:32 offset:32 size:32
+// protocolid:8 chunkid:64 version:32 offset:32 size:32 (both versions >= 1.7.32)
 
 // 0x00C9
 #define CSTOCL_READ_STATUS (PROTO_BASE+201)
@@ -529,6 +607,7 @@
 // 0x00D2
 #define CLTOCS_WRITE (PROTO_BASE+210)
 // chunkid:64 version:32 N*[ ip:32 port:16 ]
+// protocolid:8 chunkid:64 version:32 N*[ ip:32 port:16 ] (both versions >= 1.7.32)
 
 // 0x00D3
 #define CSTOCL_WRITE_STATUS (PROTO_BASE+211)
@@ -545,17 +624,17 @@
 //CHUNKSERVER <-> CHUNKSERVER
 
 // 0x00FA
-#define CSTOCS_GET_CHUNK_BLOCKS (PROTO_BASE+250)
+#define ANTOCS_GET_CHUNK_BLOCKS (PROTO_BASE+250)
 // chunkid:64 version:32
 
 // 0x00FB
-#define CSTOCS_GET_CHUNK_BLOCKS_STATUS (PROTO_BASE+251)
+#define CSTOAN_CHUNK_BLOCKS (PROTO_BASE+251)
 // chunkid:64 version:32 blocks:16 status:8
 
 //ANY <-> CHUNKSERVER
 
 // 0x012C
-#define ANTOCS_CHUNK_CHECKSUM (PROTO_BASE+300)
+#define ANTOCS_GET_CHUNK_CHECKSUM (PROTO_BASE+300)
 // chunkid:64 version:32
 
 // 0x012D
@@ -564,11 +643,12 @@
 // chunkid:64 version:32 status:8
 
 // 0x012E
-#define ANTOCS_CHUNK_CHECKSUM_TAB (PROTO_BASE+302)
+#define ANTOCS_GET_CHUNK_CHECKSUM_TAB (PROTO_BASE+302)
 // chunkid:64 version:32
 
 // 0x012F
 #define CSTOAN_CHUNK_CHECKSUM_TAB (PROTO_BASE+303)
+// maxsize=4108
 // chunkid:64 version:32 1024*[checksum:32]
 // chunkid:64 version:32 status:8
 
@@ -578,16 +658,7 @@
 
 // CLIENT <-> MASTER
 
-// old attr record:
-//   type:8 flags:8 mode:16 uid:32 gid:32 atime:32 mtime:32 ctime:32 length:64
-//   total: 32B (1+1+2+4+4+4+4+4+8)
-//
-//   flags: ---DGGGG
-//             |\--/
-//             |  \------ goal
-//             \--------- delete imediatelly
-
-// new attr record:
+// attr record
 //   type:8 mode:16 uid:32 gid:32 atime:32 mtime:32 ctime:32 nlink:32 length:64
 //   total: 35B
 //
@@ -596,7 +667,12 @@
 //           \       \------- mode
 //            \-------------- flags
 //
+// attr record (1.7.32 and up):
+//
+//   flags:8 type:4 mode:12 uid:32 gid:32 atime:32 mtime:32 ctime:32 nlink:32 [ length:64 | mojor:16 minor:16 empty:32 ]
+//
 //   in case of BLOCKDEV and CHARDEV instead of 'length:64' on the end there is 'mojor:16 minor:16 empty:32'
+
 
 // NAME type:
 // ( leng:8 data:lengB )
@@ -630,7 +706,7 @@
 // CLTOMA:
 //  rcode:8 version:32 ileng:32 info:ilengB pleng:32 path:plengB [ passcode:16B ]
 // MATOCL:
-//  version:32 sessionid:32 sesflags:8 rootuid:32 rootgid:32 mapalluid:32 mapallgid:32
+//  version:32 sessionid:32 sesflags:8 rootuid:32 rootgid:32 [ mapalluid:32 mapallgid:32 [ mingoal:8 maxgoal:8 mintrashtime:32 maxtrashtime:32 ] ]
 //  status:8
 
 #define REGISTER_RECONNECT 3
@@ -659,7 +735,8 @@
 // rcode==6: close session
 // CLTOMA:
 //  rcode:8 sessionid:32
-// MATOCL: -- no answer --
+// MATOCL:
+//  status:8
 
 // 0x0190
 #define CLTOMA_FUSE_REGISTER (PROTO_BASE+400)
@@ -667,6 +744,7 @@
 
 // 0x0191
 #define MATOCL_FUSE_REGISTER (PROTO_BASE+401)
+// maxsize=35 minsize=1
 // depends on blob - see blob descriptions above
 
 // 0x0192
@@ -675,11 +753,15 @@
 
 // 0x0193
 #define MATOCL_FUSE_STATFS (PROTO_BASE+403)
-// msgid:32 totalspace:64 availspace:64 trashspace:64 inodes:32
+// deprecated:
+//	msgid:32 totalspace:64 availspace:64 trashspace:64 inodes:32
+// current:
+//	msgid:32 totalspace:64 availspace:64 trashspace:64 sustainedspace:64 inodes:32
 
 // 0x0194
 #define CLTOMA_FUSE_ACCESS (PROTO_BASE+404)
-// msgid:32 inode:32 uid:32 gid:32 modemask:8
+// msgid:32 inode:32 uid:32 gid:32 modemask:8 - version < 2.0.0
+// msgid:32 inode:32 uid:32 gcnt:32 gcnt * [ gid:32 ] perm:16
 
 // 0x0195
 #define MATOCL_FUSE_ACCESS (PROTO_BASE+405)
@@ -687,7 +769,8 @@
 
 // 0x0196
 #define CLTOMA_FUSE_LOOKUP (PROTO_BASE+406)
-// msgid:32 inode:32 name:NAME uid:32 gid:32
+// msgid:32 inode:32 name:NAME uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 name:NAME uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x0197
 #define MATOCL_FUSE_LOOKUP (PROTO_BASE+407)
@@ -697,7 +780,8 @@
 // 0x0198
 #define CLTOMA_FUSE_GETATTR (PROTO_BASE+408)
 // msgid:32 inode:32
-// msgid:32 inode:32 uid:32 gid:32
+// msgid:32 inode:32 uid:32 gid:32 - version <= 1.6.27
+// msgid:32 inode:32 opened:8 uid:32 gid:32
 
 // 0x0199
 #define MATOCL_FUSE_GETATTR (PROTO_BASE+409)
@@ -706,10 +790,10 @@
 
 // 0x019A
 #define CLTOMA_FUSE_SETATTR (PROTO_BASE+410)
-// msgid:32 inode:32 uid:32 gid:32 setmask:8 attr:32B	- compatibility with very old version
-// msgid:32 inode:32 uid:32 gid:32 setmask:16 attr:32B  - compatibility with old version
-// msgid:32 inode:32 uid:32 gid:32 setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 - compatibility with versions < 1.6.25
-// msgid:32 inode:32 uid:32 gid:32 setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 sugidclearmode:8
+// msgid:32 inode:32 uid:32 gid:32 setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 - versions < 1.6.25
+// msgid:32 inode:32 uid:32 gid:32 setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 sugidclearmode:8 - version <= 1.6.27
+// msgid:32 inode:32 opened:8 uid:32 gid:32 setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 sugidclearmode:8 - version < 2.0.0
+// msgid:32 inode:32 opened:8 uid:32 gcnt:32 gcnt * [ gid:32 ] setmask:8 attrmode:16 attruid:32 attrgid:32 attratime:32 attrmtime:32 sugidclearmode:8
 
 // 0x019B
 #define MATOCL_FUSE_SETATTR (PROTO_BASE+411)
@@ -727,7 +811,8 @@
 
 // 0x019E
 #define CLTOMA_FUSE_SYMLINK (PROTO_BASE+414)
-// msgid:32 inode:32 name:NAME length:32 path:lengthB uid:32 gid:32
+// msgid:32 inode:32 name:NAME length:32 path:lengthB uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 name:NAME length:32 path:lengthB uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x019F
 #define MATOCL_FUSE_SYMLINK (PROTO_BASE+415)
@@ -736,7 +821,8 @@
 
 // 0x01A0
 #define CLTOMA_FUSE_MKNOD (PROTO_BASE+416)
-// msgid:32 inode:32 name:NAME type:8 mode:16 uid:32 gid:32 rdev:32
+// msgid:32 inode:32 name:NAME type:8 mode:16 uid:32 gid:32 rdev:32 - version < 2.0.0
+// msgid:32 inode:32 name:NAME type:8 mode:16 umask:16 uid:32 gcnt:32 gcnt * [ gid:32 ] rdev:32
 
 // 0x01A1
 #define MATOCL_FUSE_MKNOD (PROTO_BASE+417)
@@ -746,7 +832,8 @@
 // 0x01A2
 #define CLTOMA_FUSE_MKDIR (PROTO_BASE+418)
 // msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 - version < 1.6.25
-// msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 copysgid:8
+// msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 copysgid:8 - version < 2.0.0
+// msgid:32 inode:32 name:NAME mode:16 umask:16 uid:32 gcnt:32 gcnt * [ gid:32 ] copysgid:8
 
 // 0x01A3
 #define MATOCL_FUSE_MKDIR (PROTO_BASE+419)
@@ -755,7 +842,8 @@
 
 // 0x01A4
 #define CLTOMA_FUSE_UNLINK (PROTO_BASE+420)
-// msgid:32 inode:32 name:NAME uid:32 gid:32
+// msgid:32 inode:32 name:NAME uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 name:NAME uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01A5
 #define MATOCL_FUSE_UNLINK (PROTO_BASE+421)
@@ -763,7 +851,8 @@
 
 // 0x01A6
 #define CLTOMA_FUSE_RMDIR (PROTO_BASE+422)
-// msgid:32 inode:32 name:NAME uid:32 gid:32
+// msgid:32 inode:32 name:NAME uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 name:NAME uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01A7
 #define MATOCL_FUSE_RMDIR (PROTO_BASE+423)
@@ -771,7 +860,8 @@
 
 // 0x01A8
 #define CLTOMA_FUSE_RENAME (PROTO_BASE+424)
-// msgid:32 inode_src:32 name_src:NAME inode_dst:32 name_dst:NAME uid:32 gid:32
+// msgid:32 inode_src:32 name_src:NAME inode_dst:32 name_dst:NAME uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode_src:32 name_src:NAME inode_dst:32 name_dst:NAME uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01A9
 #define MATOCL_FUSE_RENAME (PROTO_BASE+425)
@@ -781,7 +871,8 @@
 
 // 0x01AA
 #define CLTOMA_FUSE_LINK (PROTO_BASE+426)
-// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32
+// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01AB
 #define MATOCL_FUSE_LINK (PROTO_BASE+427)
@@ -789,27 +880,26 @@
 // msgid:32 inode:32 attr:35B
 
 // 0x01AC
-#define CLTOMA_FUSE_GETDIR (PROTO_BASE+428)
-// msgid:32 inode:32 uid:32 gid:32 - old version (works like new version with flags==0)
-// msgid:32 inode:32 uid:32 gid:32 flags:8
+#define CLTOMA_FUSE_READDIR (PROTO_BASE+428)
+// msgid:32 inode:32 uid:32 gid:32 [ flags:8 [ maxentries:32 nedgeid:64 ] ] - version < 2.0.0
+// msgid:32 inode:32 uid:32 gcnt:32 gcnt * [ gid:32 ] flags:8 maxentries:32 nedgeid:64
 
 // 0x01AD
-#define MATOCL_FUSE_GETDIR (PROTO_BASE+429)
+#define MATOCL_FUSE_READDIR (PROTO_BASE+429)
 // msgid:32 status:8
-// msgid:32 N*[ name:NAME inode:32 type:8 ]	- when GETDIR_FLAG_WITHATTR in flags is not set
-// msgid:32 N*[ name:NAME inode:32 attr:35B ]	- when GETDIR_FLAG_WITHATTR in flags is set
+// msgid:32 [ nedgeid:64 ] N*[ name:NAME inode:32 type:8 ]	- when GETDIR_FLAG_WITHATTR in flags is not set
+// msgid:32 [ nedgeid:64 ] N*[ name:NAME inode:32 attr:35B ]	- when GETDIR_FLAG_WITHATTR in flags is set
 
 
 // 0x01AE
 #define CLTOMA_FUSE_OPEN (PROTO_BASE+430)
-// msgid:32 inode:32 uid:32 gid:32 flags:8
+// msgid:32 inode:32 uid:32 gid:32 flags:8 - version < 2.0.0
+// msgid:32 inode:32 uid:32 gcnt:32 gcnt * [ gid:32 ] flags:8
 
 // 0x01AF
 #define MATOCL_FUSE_OPEN (PROTO_BASE+431)
 // msgid:32 status:8
-// since 1.6.9 if no error:
 // msgid:32 attr:35B
-
 
 // 0x01B0
 #define CLTOMA_FUSE_READ_CHUNK (PROTO_BASE+432)
@@ -817,18 +907,22 @@
 
 // 0x01B1
 #define MATOCL_FUSE_READ_CHUNK (PROTO_BASE+433)
+// maxsize=4096
 // msgid:32 status:8
-// msgid:32 length:64 chunkid:64 version:32 N*[ip:32 port:16]
-// msgid:32 length:64 srcs:8 srcs*[chunkid:64 version:32 ip:32 port:16] - not implemented
+// msgid:32 length:64 chunkid:64 version:32 N*[ ip:32 port:16 ]
+// msgid:32 protocolid:8 length:64 chunkid:64 version:32 N*[ ip:32 port:16 cs_ver:32 ] (master and client both versions >= 1.7.32)
+// msgid:32 protocolid:8 length:64 srcs:16 srcs*[chunkid:64 version:32 ip:32 port:16 cs_ver:32 ] - not implemented
 
 // 0x01B2
-#define CLTOMA_FUSE_WRITE_CHUNK (PROTO_BASE+434) /* it creates, duplicates or sets new version of chunk if necessary */
+#define CLTOMA_FUSE_WRITE_CHUNK (PROTO_BASE+434)
 // msgid:32 inode:32 chunkindx:32
 
 // 0x01B3
 #define MATOCL_FUSE_WRITE_CHUNK (PROTO_BASE+435)
+// maxsize=4096
 // msgid:32 status:8
-// msgid:32 length:64 chunkid:64 version:32 N*[ip:32 port:16]
+// msgid:32 length:64 chunkid:64 version:32 N*[ ip:32 port:16 ]
+// msgid:32 protocolid:8 length:64 chunkid:64 version:32 N*[ ip:32 port:16 cs_ver:32 ] (master and client both versions >= 1.7.32)
 
 // 0x01B4
 #define CLTOMA_FUSE_WRITE_CHUNK_END (PROTO_BASE+436)
@@ -842,7 +936,8 @@
 
 // 0x01B6
 #define CLTOMA_FUSE_APPEND (PROTO_BASE+438)
-// msgid:32 inode:32 srcinode:32 uid:32 gid:32 - append to existing element
+// msgid:32 inode:32 srcinode:32 uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 srcinode:32 uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01B7
 #define MATOCL_FUSE_APPEND (PROTO_BASE+439)
@@ -855,6 +950,7 @@
 
 // 0x01B9
 #define MATOCL_FUSE_CHECK (PROTO_BASE+441)
+// maxsize=48
 // msgid:32 status:8
 // up to version 1.6.22:
 //	msgid:32 N*[ copies:8 chunks:16 ]
@@ -868,6 +964,7 @@
 
 // 0x01BB
 #define MATOCL_FUSE_GETTRASHTIME (PROTO_BASE+443)
+// maxsize=100000
 // msgid:32 status:8
 // msgid:32 tdirs:32 tfiles:32 tdirs*[ trashtime:32 dirs:32 ] tfiles*[ trashtime:32 files:32 ]
 
@@ -888,6 +985,7 @@
 
 // 0x01BF
 #define MATOCL_FUSE_GETGOAL (PROTO_BASE+447)
+// maxsize=100000
 // msgid:32 status:8
 // msgid:32 gdirs:8 gfiles:8 gdirs*[ goal:8 dirs:32 ] gfiles*[ goal:8 files:32 ]
 
@@ -914,7 +1012,7 @@
 
 // 0x01C4
 #define CLTOMA_FUSE_GETDETACHEDATTR (PROTO_BASE+452)
-// msgid:32 inode:32 dtype:8
+// msgid:32 inode:32 [ dtype:8 ]
 
 // 0x01C5
 #define MATOCL_FUSE_GETDETACHEDATTR (PROTO_BASE+453)
@@ -966,12 +1064,16 @@
 // 0x01CF
 #define MATOCL_FUSE_GETDIRSTATS (PROTO_BASE+463)
 // msgid:32 status:8
-// msgid:32 inodes:32 dirs:32 files:32 ugfiles:32 mfiles:32 chunks:32 ugchunks:32 mchunks32 length:64 size:64 gsize:64
+// deprecated:
+//	msgid:32 inodes:32 dirs:32 files:32 ugfiles:32 mfiles:32 chunks:32 ugchunks:32 mchunks:32 length:64 size:64 gsize:64
+// current:
+//	msgid:32 inodes:32 dirs:32 files:32 chunks:32 length:64 size:64 gsize:64
 
 
 // 0x01D0
 #define CLTOMA_FUSE_TRUNCATE (PROTO_BASE+464)
-// msgid:32 inode:32 [opened:8] uid:32 gid:32 opened:8 length:64
+// msgid:32 inode:32 [ opened:8 ] uid:32 gid:32 length:64 (version < 2.0.0)
+// msgid:32 inode:32 opened:8 uid:32 gcnt:32 gcnt * [ gid:32 ] length:64 (version >= 2.0.0)
 
 // 0x01D1
 #define MATOCL_FUSE_TRUNCATE (PROTO_BASE+465)
@@ -981,7 +1083,8 @@
 
 // 0x01D2
 #define CLTOMA_FUSE_REPAIR (PROTO_BASE+466)
-// msgid:32 inode:32 uid:32 gid:32
+// msgid:32 inode:32 uid:32 gid:32 - version < 2.0.0
+// msgid:32 inode:32 uid:32 gcnt:32 gcnt * [ gid:32 ]
 
 // 0x01D3
 #define MATOCL_FUSE_REPAIR (PROTO_BASE+467)
@@ -991,7 +1094,9 @@
 
 // 0x01D4
 #define CLTOMA_FUSE_SNAPSHOT (PROTO_BASE+468)
-// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32 canoverwrite:8
+// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32 canoverwrite:8 (version <= 1.6.27)
+// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gid:32 smode:8 umask:16 (version > 1.6.27 and version < 2.0.0)
+// msgid:32 inode:32 inode_dst:32 name_dst:NAME uid:32 gcnt:32 gcnt * [ gid:32 ] smode:8 umask:16 (version >= 2.0.0)
 
 // 0x01D5
 #define MATOCL_FUSE_SNAPSHOT (PROTO_BASE+469)
@@ -999,11 +1104,11 @@
 
 
 // 0x01D6
-#define CLTOMA_FUSE_GETRESERVED (PROTO_BASE+470)
+#define CLTOMA_FUSE_GETSUSTAINED (PROTO_BASE+470)
 // msgid:32
 
 // 0x01D7
-#define MATOCL_FUSE_GETRESERVED (PROTO_BASE+471)
+#define MATOCL_FUSE_GETSUSTAINED (PROTO_BASE+471)
 // msgid:32 status:8
 // msgid:32 N*[ name:NAME inode:32 ]
 
@@ -1014,6 +1119,7 @@
 
 // 0x01D9
 #define MATOCL_FUSE_GETEATTR (PROTO_BASE+473)
+// maxsize=100000
 // msgid:32 status:8
 // msgid:32 eattrdirs:8 eattrfiles:8 eattrdirs*[ eattr:8 dirs:32 ] eattrfiles*[ eattr:8 files:32 ]
 
@@ -1041,7 +1147,8 @@
 
 // 0x01DE
 #define CLTOMA_FUSE_GETXATTR (PROTO_BASE+478)
-// msgid:32 inode:32 opened:8 uid:32 gid:32 nleng:8 name:nlengB mode:8
+// msgid:32 inode:32 opened:8 uid:32 gid:32 nleng:8 name:nlengB mode:8 (version < 2.0.0)
+// msgid:32 inode:32 nleng:8 name:nlengB mode:8 opened:8 uid:32 gcnt:32 gcnt * [ gid:32 ] (version >= 2.0.0)
 //   empty name = list names
 //   mode:
 //    0 - get data
@@ -1049,13 +1156,15 @@
 
 // 0x01DF
 #define MATOCL_FUSE_GETXATTR (PROTO_BASE+479)
+// maxsize=100000
 // msgid:32 status:8
 // msgid:32 vleng:32
 // msgid:32 vleng:32 value:vlengB
 
 // 0x01E0
 #define CLTOMA_FUSE_SETXATTR (PROTO_BASE+480)
-// msgid:32 inode:32 uid:32 gid:32 nleng:8 name:8[NLENG] vleng:32 value:8[VLENG] mode:8
+// msgid:32 inode:32 uid:32 gid:32 nleng:8 name:8[NLENG] vleng:32 value:8[VLENG] mode:8 (version < 2.0.0)
+// msgid:32 inode:32 nleng:8 name:8[NLENG] vleng:32 value:8[VLENG] mode:8 opened:8 uid:32 gcnt:32 gcnt * [ gid:32 ] (version >= 2.0.0)
 //   mode:
 //    0 - create or replace
 //    1 - create only
@@ -1066,48 +1175,51 @@
 #define MATOCL_FUSE_SETXATTR (PROTO_BASE+481)
 // msgid:32 status:8 
 
+// 0x01E2
+#define CLTOMA_FUSE_CREATE (PROTO_BASE+482)
+// msgid:32 inode:32 name:NAME mode:16 uid:32 gid:32 (version < 2.0.0)
+// msgid:32 inode:32 name:NAME mode:16 umask:16 uid:32 gcnt:32 gcnt * [ gid:32 ] (version >= 2.0.0)
 
+// 0x01E3
+#define MATOCL_FUSE_CREATE (PROTO_BASE+483)
+// msgid:32 status:8
+// msgid:32 inode:32 attr:35B
 
-/* Abandoned sub-project - directory entries cached on client side
-// directory removed from cache
-// 0x01EA
-#define CLTOMA_FUSE_DIR_REMOVED (PROTO_BASE+490)
+// 0x01E4
+#define CLTOMA_FUSE_PARENTS (PROTO_BASE+484)
+// msgid:32 inode:32
+
+// 0x01E5
+#define MATOCL_FUSE_PARENTS (PROTO_BASE+485)
+// msgid:32 status:8
 // msgid:32 N*[ inode:32 ]
 
-// attributes of inode have changed
-// 0x01EB
-#define MATOCL_FUSE_NOTIFY_ATTR (PROTO_BASE+491)
-// msgid:32 N*[ inode:32 attr:35B ]
+// 0x01E6
+#define CLTOMA_FUSE_PATHS (PROTO_BASE+486)
+// msgid:32 inode:32
 
-// new entry has been added
-// 0x01EC
-#define MATOCL_FUSE_NOTIFY_LINK (PROTO_BASE+492)
-// msgid:32 timestamp:32 N*[ parent:32 name:NAME inode:32 attr:35B ]
+// 0x01E7
+#define MATOCL_FUSE_PATHS (PROTO_BASE+487)
+// msgid:32 status:8
+// msgid:32 N*[ length:32 path:lengthB ]
 
-// entry has been deleted
-// 0x01ED
-#define MATOCL_FUSE_NOTIFY_UNLINK (PROTO_BASE+493)
-// msgid:32 timestamp:32 N*[ parent:32 name:NAME ]
+#define CLTOMA_FUSE_GETACL (PROTO_BASE+488)
+// msgid:32 inode:32 acltype:8 opened:8 uid:32 gcnt:32 gcnt * [ gid:32 ]
 
-// whole directory needs to be removed
-// 0x01EE
-#define MATOCL_FUSE_NOTIFY_REMOVE (PROTO_BASE+494)
-// msgid:32 N*[ inode:32 ]
+#define MATOCL_FUSE_GETACL (PROTO_BASE+489)
+// msgid:32 status:8
+// msgid:32 userperm:16 groupperm:16 otherperm:16 mask:16 namedusers:16 namedgroups:16 namedusers * [ id:32 perm:16 ] namedgroups * [ id:32 perm:16 ]
 
-// parent inode has changed
-// 0x01EF
-#define MATOCL_FUSE_NOTIFY_PARENT (PROTO_BASE+495)
-// msgid:32 N*[ inode:32 parent:32 ]
+#define CLTOMA_FUSE_SETACL (PROTO_BASE+490)
+// msgid:32 inode:32 uid:32 acltype:8 userperm:16 groupperm:16 otherperm:16 mask:16 namedusers:16 namedgroups:16 namedusers * [ id:32 perm:16 ] namedgroups * [ id:32 perm:16 ]
 
-// last notification
-// 0x01F0
-#define MATOCL_FUSE_NOTIFY_END (PROTO_BASE+496)
-// msgid:32
-*/
+#define MATOCL_FUSE_SETACL (PROTO_BASE+491)
+// msgid:32 status:8
 
-// special - reserved (opened) inodes - keep opened files.
+
+// special - sustained (opened) inodes - keep opened files.
 // 0x01F3
-#define CLTOMA_FUSE_RESERVED_INODES (PROTO_BASE+499)
+#define CLTOMA_FUSE_SUSTAINED_INODES (PROTO_BASE+499)
 // N*[ inode:32 ]
 
 
@@ -1116,138 +1228,183 @@
 // MASTER STATS (stats - unregistered)
 
 
-// 0x001F4
+// 0x01F4
 #define CLTOMA_CSERV_LIST (PROTO_BASE+500)
 // -
 
-// 0x001F5
+// 0x01F5
 #define MATOCL_CSERV_LIST (PROTO_BASE+501)
-// 	N*[ip:32 port:16 used:64 total:64 chunks:32 tdused:64 tdtotal:64 tdchunks:32 errorcount:32 ]
-// since version 1.5.13:
-// 	N*[version:32 ip:32 port:16 used:64 total:64 chunks:32 tdused:64 tdtotal:64 tdchunks:32 errorcount:32 ]
+// N*[ip:32 port:16 used:64 total:64 chunks:32 tdused:64 tdtotal:64 tdchunks:32 errorcount:32 ] (version < 1.5.13)
+// N*[version:32 ip:32 port:16 used:64 total:64 chunks:32 tdused:64 tdtotal:64 tdchunks:32 errorcount:32 ] (version >= 1.5.13)
 
 
-// 0x001F6
+// 0x01F6
 #define CLTOCS_HDD_LIST_V1 (PROTO_BASE+502)
 // -
 
-// 0x001F7
+// 0x01F7
 #define CSTOCL_HDD_LIST_V1 (PROTO_BASE+503)
 // N*[ path:NAME flags:8 errchunkid:64 errtime:32 used:64 total:64 chunkscount:32 ]
 
 
-// 0x001F8
+// 0x01F8
 #define CLTOAN_CHART (PROTO_BASE+504)
-// chartid:32
+//	chartid:32
+// since version 2.0:
+//	chartid:32 width:16 height:16
 
-// 0x001F9
+// 0x01F9
 #define ANTOCL_CHART (PROTO_BASE+505)
-// chart:GIF
+// maxsize=10000000
+// chart:PNG
 
-
-// 0x001FA
+// 0x01FA
 #define CLTOAN_CHART_DATA (PROTO_BASE+506)
-// chartid:32
+// chartid:32 (version < 2.0.15)
+// chartid:32 [ maxentries:32 ] (version >= 2.0.15)
 
-// 0x001FB
+// 0x01FB
 #define ANTOCL_CHART_DATA (PROTO_BASE+507)
-// time:32 N*[ data:64 ]
+// maxsize=10000000
+// time:32 N*[ data:64 ] (version < 2.0.15)
+// time:32 entries:32 N*[ data:64 ] (version >= 2.0.15)
 
 
-// 0x001FC
+// 0x01FC
 #define CLTOMA_SESSION_LIST (PROTO_BASE+508)
-// -
+// [ vmode:8 ]
 
-// 0x001FD
+// 0x01FD
 #define MATOCL_SESSION_LIST (PROTO_BASE+509)
 // N*[ip:32 version:32 ]
 
 
-// 0x001FE
+// 0x01FE
 #define CLTOMA_INFO (PROTO_BASE+510)
 // -
 
-// 0x001FF
+// 0x01FF
 #define MATOCL_INFO (PROTO_BASE+511)
-// 	totalspace:64 availspace:64 trashspace:64 trashnodes:32 reservedspace:64 reservednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 tdchunks:32
-// since version 1.5.13:
-// 	version:32 totalspace:64 availspace:64 trashspace:64 trashnodes:32 reservedspace:64 reservednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 chunkcopies:32 tdcopies:32
+// version:32 totalspace:64 availspace:64 trashspace:64 trashnodes:32 sustainedspace:64 sustainednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 chunkcopies:32 tdcopies:32 (size = 68,version < 2.0.0)
+// version:32 memusage:64 totalspace:64 availspace:64 trashspace:64 trashnodes:32 sustainedspace:64 sustainednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 chunkcopies:32 tdcopies:32 (size = 76,version < 2.0.0)
+// version:32 memusage:64 syscpu:64 usercpu:64 totalspace:64 availspace:64 trashspace:64 trashnodes:32 sustainedspace:64 sustainednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 chunkcopies:32 tdcopies:32 laststore_ts:32 laststore_duration:32 laststore_status:8 (size = 101,version < 2.0.0)
+// version:32 memusage:64 syscpu:64 usercpu:64 totalspace:64 availspace:64 trashspace:64 trashnodes:32 sustainedspace:64 sustainednodes:32 allnodes:32 dirnodes:32 filenodes:32 chunks:32 chunkcopies:32 tdcopies:32 laststore_ts:32 laststore_duration:32 laststore_status:8 state:8 nstate:8 stable:8 sync:8 leaderip:32 state_chg_time:32 meta_version:64 (size = 121,version >= 2.0.0)
 
-
-// 0x00200
+// 0x0200
 #define CLTOMA_FSTEST_INFO (PROTO_BASE+512)
 // -
 
-// 0x00201
+// 0x0201
 #define MATOCL_FSTEST_INFO (PROTO_BASE+513)
-// 	loopstart:32 loopend:32 files:32 ugfiles:32 mfiles:32 chunks:32 ugchunks:32 mchunks:32 msgleng:32 msgleng*[ char:8]
-// since version 1.5.13
-// 	loopstart:32 loopend:32 files:32 ugfiles:32 mfiles:32 msgleng:32 msgleng*[ char:8]
+// maxsize=10000000
+// deprecated:
+// 	loopstart:32 loopend:32 files:32 ugfiles:32 mfiles:32 msgleng:32 msgleng*[ char:8 ]
+// current:
+// 	loopstart:32 loopend:32 files:32 ugfiles:32 mfiles:32 chunks:32 ugchunks:32 mchunks:32 msgleng:32 msgleng*[ char:8 ]
 
 
-// 0x00202
+// 0x0202
 #define CLTOMA_CHUNKSTEST_INFO (PROTO_BASE+514)
 // -
 
-// 0x00203
+// 0x0203
 #define MATOCL_CHUNKSTEST_INFO (PROTO_BASE+515)
-// loopstart:32 loopend:32 del_invalid:32 nodel_invalid:32 del_unused:32 nodel_unused:32 del_diskclean:32 nodel_diskclean:32 del_overgoal:32 nodel_overgoal:32 copy_undergoal:32 nocopy_undergoal:32 copy_rebalance:32
+// loopstart:32 loopend:32 del_invalid:32 nodel_invalid:32 del_unused:32 nodel_unused:32 del_diskclean:32 nodel_diskclean:32 del_overgoal:32 nodel_overgoal:32 copy_undergoal:32 nocopy_undergoal:32 copy_rebalance:32 [ locked_unused:32 locked_used:32 ]
 
 
-// 0x00204
+// 0x0204
 #define CLTOMA_CHUNKS_MATRIX (PROTO_BASE+516)
 // [matrix_id:8]
 
-// 0x00205
+// 0x0205
 #define MATOCL_CHUNKS_MATRIX (PROTO_BASE+517)
-// 11*[11* count:32] - 11x11 matrix of chunks counters (goal x validcopies), 10 means 10 or more
+// maxsize=969 minsize=484
+// 11*[11* count:32] [ 11*[11* count:32]] - 11x11 matrix of chunks counters (goal x validcopies), 10 means 10 or more
 
 
-// 0x00206
+// 0x0206
 #define CLTOMA_QUOTA_INFO (PROTO_BASE+518)
 // -
 
-// 0x00207
+// 0x0207
 #define MATOCL_QUOTA_INFO (PROTO_BASE+519)
-// quota_time_limit:32 N * [ inode:32 pleng:32 path:plengB exceeded:8 qflags:8 stimestamp:32 sinodes:32 slength:64 ssize:64 sgoalsize:64 hinodes:32 hlength:64 hsize:64 hgoalsize:64 currinodes:32 currlength:64 currsize:64 currgoalsize:64 ]
+// quota_time_limit:32 N*[ inode:32 pleng:32 path:plengB exceeded:8 qflags:8 stimestamp:32 sinodes:32 slength:64 ssize:64 sgoalsize:64 hinodes:32 hlength:64 hsize:64 hgoalsize:64 currinodes:32 currlength:64 currsize:64 currgoalsize:64 ]
 
 
-// 0x00208
+// 0x0208
 #define CLTOMA_EXPORTS_INFO (PROTO_BASE+520)
-// -
+// [ vmode:8 ]
 
-// 0x00209
+// 0x0209
 #define MATOCL_EXPORTS_INFO (PROTO_BASE+521)
-// N * [ fromip:32 toip:32 pleng:32 path:plengB extraflags:8 sesflags:8 rootuid:32 rootgid:32 ]
+// N*[ fromip:32 toip:32 pleng:32 path:plengB extraflags:8 sesflags:8 rootuid:32 rootgid:32 ]
 
 
-// 0x0020A
+// 0x020A
 #define CLTOMA_MLOG_LIST (PROTO_BASE+522)
 // -
 
-// 0x0020B
+// 0x020B
 #define MATOCL_MLOG_LIST (PROTO_BASE+523)
-// N * [ version:32 ip:32 ]
+// N*[ version:32 ip:32 ]
 
 
-// 0x0020C
-#define CLTOMA_CSSERV_REMOVESERV (PROTO_BASE+524)
+// 0x020C
+#define CLTOMA_CSSERV_COMMAND (PROTO_BASE+524)
+// ip:32 port:16 (version < 1.6.28)
+// commandid:8 ip:32 port:16 (version >= 1.6.28)
+
+// 0x020D
+#define MATOCL_CSSERV_COMMAND (PROTO_BASE+525)
+// [ status:8 ]
+
+// 0x020E
+#define CLTOMA_SESSION_COMMAND (PROTO_BASE+526)
+// commandid:8 sessionid:32
+
+// 0x020F
+#define MATOCL_SESSION_COMMAND (PROTO_BASE+527)
+// deprecated:
+//	-
+// current:
+//	status:8
+
+// 0x0210
+#define CLTOMA_MEMORY_INFO (PROTO_BASE+528)
 // -
 
-// 0x0020D
-#define MATOCL_CSSERV_REMOVESERV (PROTO_BASE+525)
-// N * [ version:32 ip:32 ]
+// 0x0211
+#define MATOCL_MEMORY_INFO (PROTO_BASE+529)
+// maxsize=176
+// N*[ allocated:64 used:64 ]
+//   N = 11 (ver 1.7.15)
+//     0 - chunk hash
+//     1 - chunks
+//     2 - chunk server lists
+//     3 - edge hash
+//     4 - edges (file names)
+//     5 - i-node hash
+//     6 - i-nodes
+//     7 - free i-nodes
+//     8 - chunk tabs
+//     9 - symlinks
+//     10 - quota
 
+#define CLTOAN_MODULE_INFO (PROTO_BASE+530)
+// -
+#define ANTOCL_MODULE_INFO (PROTO_BASE+531)
+// module_type:8 module_version:32 module_id:16 meta_id:64 leader_ip:32 leader_port:16
 
 // CHUNKSERVER STATS
 
 
-// 0x00258
+// 0x0258
 #define CLTOCS_HDD_LIST_V2 (PROTO_BASE+600)
 // -
 
-// 0x00259
+// 0x0259
 #define CSTOCL_HDD_LIST_V2 (PROTO_BASE+601)
 // N*[ entrysize:16 path:NAME flags:8 errchunkid:64 errtime:32 used:64 total:64 chunkscount:32 bytesread:64 usecread:64 usecreadmax:64 byteswriten:64 usecwrite:64 usecwritemax:64]
+
 
 #endif

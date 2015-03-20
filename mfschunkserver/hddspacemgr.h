@@ -1,19 +1,15 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
 #ifndef _HDDSPACEMGR_H_
@@ -55,15 +51,15 @@ int hdd_spacechanged(void);
 void hdd_get_space(uint64_t *usedspace,uint64_t *totalspace,uint32_t *chunkcount,uint64_t *tdusedspace,uint64_t *tdtotalspace,uint32_t *tdchunkcount);
 
 /* I/O operations */
-int hdd_open(uint64_t chunkid);
+int hdd_open(uint64_t chunkid,uint32_t version);
 int hdd_close(uint64_t chunkid);
 int hdd_read(uint64_t chunkid,uint32_t version,uint16_t blocknum,uint8_t *buffer,uint32_t offset,uint32_t size,uint8_t *crcbuff);
 int hdd_write(uint64_t chunkid,uint32_t version,uint16_t blocknum,const uint8_t *buffer,uint32_t offset,uint32_t size,const uint8_t *crcbuff);
 
 /* chunk info */
-int hdd_check_version(uint64_t chunkid,uint32_t version);
-int hdd_get_blocks(uint64_t chunkid,uint32_t version,uint16_t *blocks);
-int hdd_get_checksum(uint64_t chunkid, uint32_t version, uint32_t *checksum);
+// int hdd_check_version(uint64_t chunkid,uint32_t version);
+int hdd_get_blocks(uint64_t chunkid,uint32_t version,uint8_t *blocks_buff);
+int hdd_get_checksum(uint64_t chunkid, uint32_t version, uint8_t *checksum_buff);
 int hdd_get_checksum_tab(uint64_t chunkid, uint32_t version, uint8_t *checksum_tab);
 
 /* chunk operations */

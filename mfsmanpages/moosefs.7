@@ -1,0 +1,95 @@
+.TH moosefs "7" "October 2014" "MooseFS 2.0.40-1" "This is part of MooseFS"
+.SH NAME
+MooseFS \- networking, distributed, fault-tolerant file system
+.SH DESCRIPTION
+.PP
+MooseFS is a networking, distributed file system. It spreads data over several
+physical localisations (servers), which are visible to a user as one resource.
+For standard file operations MooseFS acts as other Unix-alike file systems. It has
+hierarchical structure (directory tree), stores files' attributes (permissions,
+last access and modification times) as well as makes it possible to create
+special files (block and character devices, pipes and sockets), symbolic links
+(file names pointing to another files accessible locally, not necessarily on
+MooseFS) and hard links (different names of files which refer to the same data on
+MooseFS). Access to the file system can be limited basing on IP address and/or
+password.
+.PP
+Distinctive features of MooseFS are:
+.IP \[bu] 2
+Scalability and performance
+.IP \[bu] 2
+Flexible deployment options
+.IP \[bu] 2
+POSIX compliance
+.IP \[bu] 2
+Global namespace
+.IP \[bu] 2
+Atomic snapshots
+.IP \[bu] 2
+Global trash bin
+.IP \[bu] 2
+Automatic rebalansing
+.IP \[bu] 2
+Redundant copies for individual objects
+.IP \[bu] 2
+Support	for extended attributes
+.IP \[bu] 2
+Support for ACL's
+.IP \[bu] 2
+Support for quotas (per canatalog)
+.IP \[bu] 2
+High Availability option for Master server (PRO version only)
+.SH ARCHITECTURE
+.PP
+MooseFS installation consists of four types of machines:
+.IP \[bu] 2
+managing/metadata servers (\fBmfsmaster\fR(8)) - small number of metadata
+servers. Those servers are storing information on size, attributes and file
+localisation(s), including all information about non-regular files, i.e.
+directories, sockets, pipes and devices.
+One of them also manages the whole filesystem. In open-source (CE) version
+there can be only one mfsmaster.
+.IP \[bu] 2
+data servers (\fBmfschunkserver\fR(8)) - any number of commodity servers storing files
+data and replicating it among themselves (if a certain file is supposed to
+exist in more than one copy).
+.IP \[bu] 2
+metadata backup servers (\fBmfsmetalogger\fR(8)) - any number of servers, all of
+which store metadata changelogs and periodically downloading base metadata file;
+mainly usable as almost-ready-to-run mfsmaster in one-master installations.
+it's easy to run \fBmfsmaster\fR(8) process on such machine when primary master
+stops working.
+.IP \[bu] 2
+client computers referring to MooseFS stored files - any number of machines with
+working \fBmfsmount\fR(8) process that communicates with the managing server to
+receive and modify file information and with chunkservers to exchange actual
+file data.
+.PP
+Metadata is stored in memory of the metadata servers and simultaneously is being
+saved on disk (as a periodically updated binary file and immediately updated
+incremental logs). The main binary file as well as the logs are replicated to
+metaloggers (if present) and/or other masters (if present).
+.PP
+File data is divided to fragments (chunks) of maximum size 64MB each which are
+stored as files on selected disks on data servers (chunkservers). Each chunk is
+saved on different computers in a number of copies equal to a "goal" for the
+given file.
+.SH "REPORTING BUGS"
+Report bugs to <bugs@moosefs.com>.
+.SH COPYRIGHT
+Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+
+This file is part of MooseFS.
+
+READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+PROPERTY OR OTHER PROPRITARY RIGHTS.
+.SH "SEE ALSO"
+.BR mfschunkserver (8),
+.BR mfsmaster (8),
+.BR mfstools (1),
+.BR mfsmount (8)

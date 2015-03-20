@@ -1,0 +1,47 @@
+.TH mfsnetdump "8" "October 2014" "MooseFS 2.0.40-1" "This is part of MooseFS"
+.SH NAME
+mfsnetdump \- dump network traffic as mfs packets
+.SH SYNOPSIS
+.B mfsnetdump [-s] [-i net device] [-f pcap_filter] [-c packet count] [-e commands] [-o commands]
+.PP
+.SH DESCRIPTION
+.PP
+\fBmfsnetdump\fP is 
+the supervisor program of Moose File System. It is needed to start 
+a completely new system or a system after a big crash. It can be also used to force select a new
+leader master.
+.SH OPTIONS
+.TP
+\fB\-s\fP
+set standard PCAP filter (dump only mfs ports - default:9419-9422)
+.TP
+\fB\-i\fP
+dump packets using given network interface
+.TP
+\fB\-f\fP
+define pcap filter to filter packets
+.TP
+\fB\-c\fP
+dump only 'count' packets and exit
+.TP
+\fB\-e\fP
+do not display given commands
+.TP
+\fB\-o\fP
+show only given commands
+.SH "REPORTING BUGS"
+Report bugs to <bugs@moosefs.com>.
+.SH COPYRIGHT
+Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+
+This file is part of MooseFS.
+
+READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU DO NOT ACQUIRE
+ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+PROPERTY OR OTHER PROPRIETARY RIGHTS.
+.SH "SEE ALSO"
+.BR moosefs (7)

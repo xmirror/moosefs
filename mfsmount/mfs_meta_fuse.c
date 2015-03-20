@@ -1,28 +1,26 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
 #if defined(__APPLE__)
-# ifndef __DARWIN_64_BIT_INO_T
+# if ! defined(__DARWIN_64_BIT_INO_T) && ! defined(_DARWIN_USE_64_BIT_INODE)
 #  define __DARWIN_64_BIT_INO_T 0
 # endif
 #endif
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <fuse_lowlevel.h>
 #include <stdio.h>
@@ -64,24 +62,24 @@ typedef struct _pathbuf {
 #define META_ROOT_INODE FUSE_ROOT_ID
 #define META_ROOT_MODE 0555
 
-#define META_TRASH_INODE (FUSE_ROOT_ID+1)
+#define META_TRASH_INODE 0x7FFFFFF8
 #define META_TRASH_MODE 0700
 #define META_TRASH_NAME "trash"
-#define META_UNDEL_INODE (FUSE_ROOT_ID+2)
+#define META_UNDEL_INODE 0x7FFFFFF9
 #define META_UNDEL_MODE 0200
 #define META_UNDEL_NAME "undel"
-#define META_RESERVED_INODE (FUSE_ROOT_ID+3)
-#define META_RESERVED_MODE 0500
-#define META_RESERVED_NAME "reserved"
+#define META_SUSTAINED_INODE 0x7FFFFFFA
+#define META_SUSTAINED_MODE 0500
+#define META_SUSTAINED_NAME "sustained"
 
-#define META_INODE_MIN META_ROOT_INODE
-#define META_INODE_MAX META_RESERVED_INODE
+//#define META_INODE_MIN META_ROOT_INODE
+//#define META_INODE_MAX META_SUSTAINED_INODE
 
-#define INODE_VALUE_MASK 0x1FFFFFFF
-#define INODE_TYPE_MASK 0x60000000
-#define INODE_TYPE_TRASH 0x20000000
-#define INODE_TYPE_RESERVED 0x40000000
-#define INODE_TYPE_SPECIAL 0x00000000
+//#define INODE_VALUE_MASK 0x1FFFFFFF
+//#define INODE_TYPE_MASK 0x60000000
+//#define INODE_TYPE_TRASH 0x20000000
+//#define INODE_TYPE_SUSTAINED 0x40000000
+//#define INODE_TYPE_SPECIAL 0x00000000
 
 // standard fs - inode(.master)=0x7FFFFFFF / inode(.masterinfo)=0x7FFFFFFE
 // meta fs - inode(.master)=0x7FFFFFFE / inode(.masterinfo)=0x7FFFFFFF
@@ -90,14 +88,19 @@ typedef struct _pathbuf {
 // 0x01b6 = 0666
 //static uint8_t masterattr[35]={'f', 0x01,0xB6, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,0};
 
+#define MASTERINFO_WITH_VERSION 1
+
 #define MASTERINFO_NAME ".masterinfo"
-#define MASTERINFO_INODE 0x7FFFFFFE
+#define MASTERINFO_INODE 0x7FFFFFFF
 // 0x0124 = 0444
 #ifdef MASTERINFO_WITH_VERSION
 static uint8_t masterinfoattr[35]={'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,14};
 #else
 static uint8_t masterinfoattr[35]={'f', 0x01,0x24, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1, 0,0,0,0,0,0,0,10};
 #endif
+
+#define MIN_SPECIAL_INODE 0x7FFFFFF0
+#define IS_SPECIAL_INODE(ino) ((ino)>=MIN_SPECIAL_INODE || (ino)==META_ROOT_INODE)
 
 // info - todo
 //#define META_INFO_INODE 0x7FFFFFFD
@@ -117,36 +120,6 @@ uint32_t mfs_meta_name_to_inode(const char *name) {
 		return inode;
 	} else {
 		return 0;
-	}
-}
-
-static void mfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbuf) {
-	memset(stbuf,0,sizeof(struct stat));
-	stbuf->st_ino = inode;
-	switch (type) {
-	case TYPE_DIRECTORY:
-		stbuf->st_mode = S_IFDIR;
-		break;
-	case TYPE_SYMLINK:
-		stbuf->st_mode = S_IFLNK;
-		break;
-	case TYPE_FILE:
-		stbuf->st_mode = S_IFREG;
-		break;
-	case TYPE_FIFO:
-		stbuf->st_mode = S_IFIFO;
-		break;
-	case TYPE_SOCKET:
-		stbuf->st_mode = S_IFSOCK;
-		break;
-	case TYPE_BLOCKDEV:
-		stbuf->st_mode = S_IFBLK;
-		break;
-	case TYPE_CHARDEV:
-		stbuf->st_mode = S_IFCHR;
-		break;
-	default:
-		stbuf->st_mode = 0;
 	}
 }
 
@@ -183,12 +156,78 @@ static int mfs_errorconv(int status) {
 	}
 }
 
+static inline uint8_t fsnodes_type_convert(uint8_t type) {
+	switch (type) {
+		case DISP_TYPE_FILE:
+			return TYPE_FILE;
+		case DISP_TYPE_DIRECTORY:
+			return TYPE_DIRECTORY;
+		case DISP_TYPE_SYMLINK:
+			return TYPE_SYMLINK;
+		case DISP_TYPE_FIFO:
+			return TYPE_FIFO;
+		case DISP_TYPE_BLOCKDEV:
+			return TYPE_BLOCKDEV;
+		case DISP_TYPE_CHARDEV:
+			return TYPE_CHARDEV;
+		case DISP_TYPE_SOCKET:
+			return TYPE_SOCKET;
+		case DISP_TYPE_TRASH:
+			return TYPE_TRASH;
+		case DISP_TYPE_SUSTAINED:
+			return TYPE_SUSTAINED;
+	}
+	return 0;
+}
+
+static void mfs_meta_type_to_stat(uint32_t inode,uint8_t type, struct stat *stbuf) {
+	memset(stbuf,0,sizeof(struct stat));
+	stbuf->st_ino = inode;
+	switch (type&0x7F) {
+	case DISP_TYPE_DIRECTORY:
+	case TYPE_DIRECTORY:
+		stbuf->st_mode = S_IFDIR;
+		break;
+	case DISP_TYPE_SYMLINK:
+	case TYPE_SYMLINK:
+		stbuf->st_mode = S_IFLNK;
+		break;
+	case DISP_TYPE_FILE:
+	case TYPE_FILE:
+		stbuf->st_mode = S_IFREG;
+		break;
+	case DISP_TYPE_FIFO:
+	case TYPE_FIFO:
+		stbuf->st_mode = S_IFIFO;
+		break;
+	case DISP_TYPE_SOCKET:
+	case TYPE_SOCKET:
+		stbuf->st_mode = S_IFSOCK;
+		break;
+	case DISP_TYPE_BLOCKDEV:
+	case TYPE_BLOCKDEV:
+		stbuf->st_mode = S_IFBLK;
+		break;
+	case DISP_TYPE_CHARDEV:
+	case TYPE_CHARDEV:
+		stbuf->st_mode = S_IFCHR;
+		break;
+	default:
+		stbuf->st_mode = 0;
+	}
+}
+
 
 static void mfs_meta_stat(uint32_t inode, struct stat *stbuf) {
 	int now;
 	stbuf->st_ino = inode;
 	stbuf->st_size = 0;
-	stbuf->st_blocks = 0;
+//#ifdef HAVE_STRUCT_STAT_ST_BLOCKS
+//	stbuf->st_blocks = 0;
+//#endif
+#ifdef HAVE_STRUCT_STAT_ST_BLKSIZE
+	stbuf->st_blksize = MFSBLOCKSIZE;
+#endif
 	switch (inode) {
 	case META_ROOT_INODE:
 		stbuf->st_nlink = 4;
@@ -202,9 +241,9 @@ static void mfs_meta_stat(uint32_t inode, struct stat *stbuf) {
 		stbuf->st_nlink = 2;
 		stbuf->st_mode = S_IFDIR | META_UNDEL_MODE ;
 		break;
-	case META_RESERVED_INODE:
+	case META_SUSTAINED_INODE:
 		stbuf->st_nlink = 2;
-		stbuf->st_mode = S_IFDIR | META_RESERVED_MODE ;
+		stbuf->st_mode = S_IFDIR | META_SUSTAINED_MODE ;
 		break;
 	}
 	stbuf->st_uid = 0;
@@ -213,6 +252,9 @@ static void mfs_meta_stat(uint32_t inode, struct stat *stbuf) {
 	stbuf->st_atime = now;
 	stbuf->st_mtime = now;
 	stbuf->st_ctime = now;
+#ifdef HAVE_STRUCT_STAT_ST_BIRTHTIME
+	stbuf->st_birthtime = now;	// for future use
+#endif
 }
 
 /*
@@ -223,15 +265,23 @@ static void mfs_inode_to_stat(uint32_t inode, struct stat *stbuf) {
 }
 */
 
-static void mfs_attr_to_stat(uint32_t inode,uint8_t attr[35], struct stat *stbuf) {
+static void mfs_attr_to_stat(uint32_t inode,const uint8_t attr[35], struct stat *stbuf) {
 	uint16_t attrmode;
 	uint8_t attrtype;
 	uint32_t attruid,attrgid,attratime,attrmtime,attrctime,attrnlink;
 	uint64_t attrlength;
 	const uint8_t *ptr;
 	ptr = attr;
-	attrtype = get8bit(&ptr);
-	attrmode = get16bit(&ptr);
+	if (attr[0]<64) { // 1.7.29 and up
+		ptr++;
+		attrmode = get16bit(&ptr);
+		attrtype = (attrmode>>12);
+	} else {
+		attrtype = get8bit(&ptr);
+		attrtype = fsnodes_type_convert(attrtype&0x7F);
+		attrmode = get16bit(&ptr);
+	}
+	attrmode &= 0x0FFF;
 	attruid = get32bit(&ptr);
 	attrgid = get32bit(&ptr);
 	attratime = get32bit(&ptr);
@@ -240,18 +290,26 @@ static void mfs_attr_to_stat(uint32_t inode,uint8_t attr[35], struct stat *stbuf
 	attrnlink = get32bit(&ptr);
 	attrlength = get64bit(&ptr);
 	stbuf->st_ino = inode;
-	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_RESERVED) {
+#ifdef HAVE_STRUCT_STAT_ST_BLKSIZE
+	stbuf->st_blksize = MFSBLOCKSIZE;
+#endif
+	if (attrtype==TYPE_FILE || attrtype==TYPE_TRASH || attrtype==TYPE_SUSTAINED) {
 		stbuf->st_mode = S_IFREG | ( attrmode & 07777);
 	} else {
 		stbuf->st_mode = 0;
 	}
 	stbuf->st_size = attrlength;
+#ifdef HAVE_STRUCT_STAT_ST_BLOCKS
 	stbuf->st_blocks = (attrlength+511)/512;
+#endif
 	stbuf->st_uid = attruid;
 	stbuf->st_gid = attrgid;
 	stbuf->st_atime = attratime;
 	stbuf->st_mtime = attrmtime;
 	stbuf->st_ctime = attrctime;
+#ifdef HAVE_STRUCT_STAT_ST_BIRTHTIME
+	stbuf->st_birthtime = attrctime;	// for future use
+#endif
 	stbuf->st_nlink = attrnlink;
 }
 
@@ -260,7 +318,7 @@ void mfs_meta_statfs(fuse_req_t req, fuse_ino_t ino) {
 #else
 void mfs_meta_statfs(fuse_req_t req) {
 #endif
-	uint64_t totalspace,availspace,trashspace,reservedspace;
+	uint64_t totalspace,availspace,trashspace,sustainedspace;
 	uint32_t inodes;
 	struct statvfs stfsbuf;
 	memset(&stfsbuf,0,sizeof(stfsbuf));
@@ -268,14 +326,14 @@ void mfs_meta_statfs(fuse_req_t req) {
 #if FUSE_USE_VERSION >= 26
 	(void)ino;
 #endif
-	fs_statfs(&totalspace,&availspace,&trashspace,&reservedspace,&inodes);
+	fs_statfs(&totalspace,&availspace,&trashspace,&sustainedspace,&inodes);
 
 	stfsbuf.f_namemax = NAME_MAX;
-	stfsbuf.f_frsize = 512;
-	stfsbuf.f_bsize = 512;
-	stfsbuf.f_blocks = trashspace/512+reservedspace/512;
-	stfsbuf.f_bfree = reservedspace/512;
-	stfsbuf.f_bavail = reservedspace/512;
+	stfsbuf.f_frsize = MFSBLOCKSIZE;
+	stfsbuf.f_bsize = MFSBLOCKSIZE;
+	stfsbuf.f_blocks = trashspace/MFSBLOCKSIZE+sustainedspace/MFSBLOCKSIZE;
+	stfsbuf.f_bfree = sustainedspace/MFSBLOCKSIZE;
+	stfsbuf.f_bavail = sustainedspace/MFSBLOCKSIZE;
 	stfsbuf.f_files = 1000000000+PKGVERSION;
 	stfsbuf.f_ffree = 1000000000+PKGVERSION;
 	stfsbuf.f_favail = 1000000000+PKGVERSION;
@@ -324,8 +382,8 @@ void mfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 			inode = META_ROOT_INODE;
 		} else if (strcmp(name,META_TRASH_NAME)==0) {
 			inode = META_TRASH_INODE;
-		} else if (strcmp(name,META_RESERVED_NAME)==0) {
-			inode = META_RESERVED_INODE;
+		} else if (strcmp(name,META_SUSTAINED_NAME)==0) {
+			inode = META_SUSTAINED_INODE;
 //		} else if (strcmp(name,MASTER_NAME)==0) {
 //			memset(&e, 0, sizeof(e));
 //			e.ino = MASTER_INODE;
@@ -361,10 +419,10 @@ void mfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 				if (status!=0) {
 					fuse_reply_err(req, status);
 				} else {
-					e.ino = inode | INODE_TYPE_TRASH;
+					e.ino = inode;
 					e.attr_timeout = attr_cache_timeout;
 					e.entry_timeout = entry_cache_timeout;
-					mfs_attr_to_stat(inode  | INODE_TYPE_TRASH,attr,&e.attr);
+					mfs_attr_to_stat(inode,attr,&e.attr);
 					fuse_reply_entry(req,&e);
 				}
 				return;
@@ -378,9 +436,9 @@ void mfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 			inode = META_TRASH_INODE;
 		}
 		break;
-	case META_RESERVED_INODE:
+	case META_SUSTAINED_INODE:
 		if (strcmp(name,".")==0) {
-			inode = META_RESERVED_INODE;
+			inode = META_SUSTAINED_INODE;
 		} else if (strcmp(name,"..")==0) {
 			inode = META_ROOT_INODE;
 		} else {
@@ -393,10 +451,10 @@ void mfs_meta_lookup(fuse_req_t req, fuse_ino_t parent, const char *name) {
 				if (status!=0) {
 					fuse_reply_err(req, status);
 				} else {
-					e.ino = inode | INODE_TYPE_RESERVED;
+					e.ino = inode;
 					e.attr_timeout = attr_cache_timeout;
 					e.entry_timeout = entry_cache_timeout;
-					mfs_attr_to_stat(inode  | INODE_TYPE_RESERVED,attr,&e.attr);
+					mfs_attr_to_stat(inode,attr,&e.attr);
 					fuse_reply_entry(req,&e);
 				}
 				return;
@@ -427,36 +485,22 @@ void mfs_meta_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		memset(&o_stbuf, 0, sizeof(struct stat));
 		mfs_attr_to_stat(ino,masterinfoattr,&o_stbuf);
 		fuse_reply_attr(req, &o_stbuf, 3600.0);
-	} else if (ino>=META_INODE_MIN && ino<=META_INODE_MAX) {
+	} else if (IS_SPECIAL_INODE(ino)) {
 		memset(&o_stbuf, 0, sizeof(struct stat));
 		mfs_meta_stat(ino,&o_stbuf);
 		fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
-	} else if ((ino & INODE_TYPE_MASK) == INODE_TYPE_TRASH) {
-		int status;
-		uint8_t attr[35];
-		status = fs_getdetachedattr(ino & INODE_VALUE_MASK,attr);
-		status = mfs_errorconv(status);
-		if (status!=0) {
-			fuse_reply_err(req, status);
-		} else {
-			memset(&o_stbuf, 0, sizeof(struct stat));
-			mfs_attr_to_stat(ino,attr,&o_stbuf);
-			fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
-		}
-	} else if ((ino & INODE_TYPE_MASK) == INODE_TYPE_RESERVED) {
-		int status;
-		uint8_t attr[35];
-		status = fs_getdetachedattr(ino & INODE_VALUE_MASK,attr);
-		status = mfs_errorconv(status);
-		if (status!=0) {
-			fuse_reply_err(req, status);
-		} else {
-			memset(&o_stbuf, 0, sizeof(struct stat));
-			mfs_attr_to_stat(ino,attr,&o_stbuf);
-			fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
-		}
 	} else {
-		fuse_reply_err(req, ENOENT);
+		int status;
+		uint8_t attr[35];
+		status = fs_getdetachedattr(ino,attr);
+		status = mfs_errorconv(status);
+		if (status!=0) {
+			fuse_reply_err(req, status);
+		} else {
+			memset(&o_stbuf, 0, sizeof(struct stat));
+			mfs_attr_to_stat(ino,attr,&o_stbuf);
+			fuse_reply_attr(req, &o_stbuf, attr_cache_timeout);
+		}
 	}
 }
 
@@ -533,12 +577,12 @@ static void dirbuf_meta_add(dirbuf *b, const char *name, fuse_ino_t ino) {
 static uint32_t dir_metaentries_size(uint32_t ino) {
 	switch (ino) {
 	case META_ROOT_INODE:
-		return 4*6+1+2+strlen(META_TRASH_NAME)+strlen(META_RESERVED_NAME);
+		return 4*6+1+2+strlen(META_TRASH_NAME)+strlen(META_SUSTAINED_NAME);
 	case META_TRASH_INODE:
 		return 3*6+1+2+strlen(META_UNDEL_NAME);
 	case META_UNDEL_INODE:
 		return 2*6+1+2;
-	case META_RESERVED_INODE:
+	case META_SUSTAINED_INODE:
 		return 2*6+1+2;
 	}
 	return 0;
@@ -566,12 +610,12 @@ static void dir_metaentries_fill(uint8_t *buff,uint32_t ino) {
 		buff+=l;
 		put32bit(&buff,META_TRASH_INODE);
 		put8bit(&buff,TYPE_DIRECTORY);
-		// reserved
-		l = strlen(META_RESERVED_NAME);
+		// sustained
+		l = strlen(META_SUSTAINED_NAME);
 		put8bit(&buff,l);
-		memcpy(buff,META_RESERVED_NAME,l);
+		memcpy(buff,META_SUSTAINED_NAME,l);
 		buff+=l;
-		put32bit(&buff,META_RESERVED_INODE);
+		put32bit(&buff,META_SUSTAINED_INODE);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
 	case META_TRASH_INODE:
@@ -607,11 +651,11 @@ static void dir_metaentries_fill(uint8_t *buff,uint32_t ino) {
 		put32bit(&buff,META_TRASH_INODE);
 		put8bit(&buff,TYPE_DIRECTORY);
 		return;
-	case META_RESERVED_INODE:
+	case META_SUSTAINED_INODE:
 		// .
 		put8bit(&buff,1);
 		put8bit(&buff,'.');
-		put32bit(&buff,META_RESERVED_INODE);
+		put32bit(&buff,META_SUSTAINED_INODE);
 		put8bit(&buff,TYPE_DIRECTORY);
 		// ..
 		put8bit(&buff,2);
@@ -644,7 +688,7 @@ static uint32_t dir_dataentries_size(const uint8_t *dbuff,uint32_t dsize) {
 	return eleng;
 }
 
-static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t dsize,uint32_t inodemask) {
+static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t dsize) {
 	const char *name;
 	uint32_t inode;
 	uint8_t nleng;
@@ -672,7 +716,6 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 				memcpy(buff+9,name,nleng);
 				buff+=9+nleng;
 			}
-			inode|=inodemask;
 			put32bit(&buff,inode);
 			put8bit(&buff,TYPE_FILE);
 		} else {
@@ -685,7 +728,7 @@ static void dir_dataentries_convert(uint8_t *buff,const uint8_t *dbuff,uint32_t 
 
 static void dirbuf_meta_fill(dirbuf *b, uint32_t ino) {
 	int status;
-	uint32_t msize,dcsize,imask;
+	uint32_t msize,dcsize;
 	const uint8_t *dbuff;
 	uint32_t dsize;
 
@@ -698,17 +741,14 @@ static void dirbuf_meta_fill(dirbuf *b, uint32_t ino) {
 			return;
 		}
 		dcsize = dir_dataentries_size(dbuff,dsize);
-		imask = INODE_TYPE_TRASH;
-	} else if (ino==META_RESERVED_INODE) {
-		status = fs_getreserved(&dbuff,&dsize);
+	} else if (ino==META_SUSTAINED_INODE) {
+		status = fs_getsustained(&dbuff,&dsize);
 		if (status!=STATUS_OK) {
 			return;
 		}
 		dcsize = dir_dataentries_size(dbuff,dsize);
-		imask = INODE_TYPE_RESERVED;
 	} else {
 		dcsize = 0;
-		imask = 0;
 	}
 	if (msize+dcsize==0) {
 		return;
@@ -722,14 +762,14 @@ static void dirbuf_meta_fill(dirbuf *b, uint32_t ino) {
 		dir_metaentries_fill(b->p,ino);
 	}
 	if (dcsize>0) {
-		dir_dataentries_convert(b->p+msize,dbuff,dsize,imask);
+		dir_dataentries_convert(b->p+msize,dbuff,dsize);
 	}
 	b->size = msize+dcsize;
 }
 
 void mfs_meta_opendir(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 	dirbuf *dirinfo;
-	if (ino==META_ROOT_INODE || ino==META_TRASH_INODE || ino==META_UNDEL_INODE || ino==META_RESERVED_INODE) {
+	if (ino==META_ROOT_INODE || ino==META_TRASH_INODE || ino==META_UNDEL_INODE || ino==META_SUSTAINED_INODE) {
 		dirinfo = malloc(sizeof(dirbuf));
 		pthread_mutex_init(&(dirinfo->lock),NULL);
 		dirinfo->p = NULL;
@@ -853,8 +893,11 @@ void mfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 		fuse_reply_open(req, fi);
 		return;
 	}
-	if ((ino & INODE_TYPE_MASK) == INODE_TYPE_TRASH) {
-		status = fs_gettrashpath((ino&INODE_VALUE_MASK),&path);
+
+	if (IS_SPECIAL_INODE(ino)) {
+		fuse_reply_err(req, EACCES);
+	} else {
+		status = fs_gettrashpath(ino,&path);
 		status = mfs_errorconv(status);
 		if (status!=0) {
 			fuse_reply_err(req, status);
@@ -875,8 +918,6 @@ void mfs_meta_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi) {
 				free(pathinfo);
 			}
 		}
-	} else {
-		fuse_reply_err(req, EACCES);
 	}
 }
 
@@ -903,7 +944,7 @@ void mfs_meta_release(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 			pathinfo->p = realloc(pathinfo->p,pathinfo->size+1);
 			pathinfo->p[pathinfo->size]=0;
 		}
-		fs_settrashpath((ino&INODE_VALUE_MASK),(uint8_t*)pathinfo->p);
+		fs_settrashpath(ino,(uint8_t*)pathinfo->p);
 	}
 	pthread_mutex_unlock(&(pathinfo->lock));
 	pthread_mutex_destroy(&(pathinfo->lock));

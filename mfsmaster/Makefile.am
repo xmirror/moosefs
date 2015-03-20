@@ -7,9 +7,18 @@ mfsmaster_SOURCES=\
 	itree.h itree.c \
 	topology.h topology.c \
 	exports.h exports.c \
+	bio.h bio.c \
 	changelog.c changelog.h \
 	chunks.c chunks.h \
 	filesystem.c filesystem.h \
+	xattr.c xattr.h \
+	posixacl.c posixacl.h \
+	openfiles.c openfiles.h \
+	csdb.c csdb.h \
+	sessions.c sessions.h \
+	metadata.c metadata.h \
+	restore.c restore.h \
+	merger.c merger.h \
 	matocsserv.c matocsserv.h \
 	matoclserv.c matoclserv.h \
 	matomlserv.c matomlserv.h \
@@ -24,7 +33,24 @@ mfsmaster_SOURCES=\
 	../mfscommon/sockets.c ../mfscommon/sockets.h \
 	../mfscommon/charts.c ../mfscommon/charts.h \
 	../mfscommon/strerr.c ../mfscommon/strerr.h \
+	../mfscommon/memusage.c ../mfscommon/memusage.h \
+	../mfscommon/cpuusage.c ../mfscommon/cpuusage.h \
+	../mfscommon/clocks.c ../mfscommon/clocks.h \
+	../mfscommon/pcqueue.c ../mfscommon/pcqueue.h \
 	../mfscommon/datapack.h ../mfscommon/massert.h \
 	../mfscommon/slogger.h ../mfscommon/mfsstrerr.h \
-	../mfscommon/hashfn.h \
+	../mfscommon/hashfn.h ../mfscommon/median.h \
+	../mfscommon/buckets.h \
 	../mfscommon/MFSCommunication.h
+
+
+EXTRA_DIST = $(sbin_SCRIPTS)
+
+sbin_SCRIPTS=\
+	mfsmetarestore
+
+distclean:distclean-am
+	-rm -rf ./$(DEPDIR)
+	-rm -f Makefile
+
+mfsmaster_CFLAGS=

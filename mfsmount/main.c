@@ -1,25 +1,30 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #if defined(HAVE_MLOCKALL) && defined(RLIMIT_MEMLOCK) && defined(MCL_CURRENT) && defined(MCL_FUTURE)
-#define MFS_USE_MEMLOCK
+#  define MFS_USE_MEMLOCK 1
+#endif
+
+#if defined(HAVE_MALLOC_H)
+#  include <malloc.h>
+#endif
+#if defined(M_ARENA_MAX) && defined(M_ARENA_TEST) && defined(HAVE_MALLOPT)
+#  define MFS_USE_MALLOPT 1
 #endif
 
 #include <fuse.h>
@@ -28,7 +33,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #ifdef MFS_USE_MEMLOCK
-#include <sys/mman.h>
+#  include <sys/mman.h>
 #endif
 #include <unistd.h>
 #include <fcntl.h>
@@ -39,18 +44,24 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <syslog.h>
+#include <signal.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include "mfs_fuse.h"
 #include "mfs_meta_fuse.h"
 
 #include "MFSCommunication.h"
+#include "clocks.h"
+#include "massert.h"
 #include "md5.h"
 #include "mastercomm.h"
 #include "masterproxy.h"
 #include "chunkloccache.h"
 #include "symlinkcache.h"
+#include "negentrycache.h"
 //#include "dircache.h"
+#include "conncache.h"
 #include "readdata.h"
 #include "writedata.h"
 #include "csdb.h"
@@ -60,12 +71,13 @@
 
 #define STR_AUX(x) #x
 #define STR(x) STR_AUX(x)
-const char id[]="@(#) version: " STR(VERSMAJ) "." STR(VERSMID) "." STR(VERSMIN) ", written by Jakub Kruszona-Zawadzki";
+const char id[]="@(#) version: " VERSSTR ", written by Jakub Kruszona-Zawadzki";
 
 #if defined(__APPLE__)
-#define DEFAULT_OPTIONS "allow_other,default_permissions,daemon_timeout=600,iosize=65536"
+#define DEFAULT_OPTIONS "allow_other,daemon_timeout=600,novncache"
+// #define DEFAULT_OPTIONS "allow_other,default_permissions,daemon_timeout=600,iosize=65536,novncache"
 #else
-#define DEFAULT_OPTIONS "allow_other,default_permissions"
+#define DEFAULT_OPTIONS "allow_other"
 #endif
 
 static void mfs_fsinit (void *userdata, struct fuse_conn_info *conn);
@@ -127,6 +139,7 @@ struct mfsopts {
 	char *masterhost;
 	char *masterport;
 	char *bindhost;
+	char *proxyhost;
 	char *subfolder;
 	char *password;
 	char *md5pass;
@@ -134,6 +147,9 @@ struct mfsopts {
 	signed nice;
 #ifdef MFS_USE_MEMLOCK
 	int memlock;
+#endif
+#ifdef MFS_USE_MALLOPT
+	int limitarenas;
 #endif
 	int nostdmountoptions;
 	int meta;
@@ -147,11 +163,18 @@ struct mfsopts {
 	int keepcache;
 	int passwordask;
 	int donotrememberpassword;
+//	int xattraclsupport;
 	unsigned writecachesize;
+	unsigned readaheadsize;
+	unsigned readaheadleng;
+	unsigned readaheadtrigger;
 	unsigned ioretries;
 	double attrcacheto;
+	double xattrcacheto;
 	double entrycacheto;
 	double direntrycacheto;
+	double negentrycacheto;
+	double groupscacheto;
 };
 
 static struct mfsopts mfsopts;
@@ -165,6 +188,7 @@ enum {
 	KEY_HOST,
 	KEY_PORT,
 	KEY_BIND,
+	KEY_PROXY,
 	KEY_PATH,
 	KEY_PASSWORDASK,
 	KEY_NOSTDMOUNTOPTIONS,
@@ -184,6 +208,7 @@ static struct fuse_opt mfs_opts_stage2[] = {
 	MFS_OPT("mfsmaster=%s", masterhost, 0),
 	MFS_OPT("mfsport=%s", masterport, 0),
 	MFS_OPT("mfsbind=%s", bindhost, 0),
+	MFS_OPT("mfsproxy=%s", proxyhost, 0),
 	MFS_OPT("mfssubfolder=%s", subfolder, 0),
 	MFS_OPT("mfspassword=%s", password, 0),
 	MFS_OPT("mfsmd5pass=%s", md5pass, 0),
@@ -192,7 +217,13 @@ static struct fuse_opt mfs_opts_stage2[] = {
 #ifdef MFS_USE_MEMLOCK
 	MFS_OPT("mfsmemlock", memlock, 1),
 #endif
+#ifdef MFS_USE_MALLOPT
+	MFS_OPT("mfslimitarenas=%u", limitarenas, 0),
+#endif
 	MFS_OPT("mfswritecachesize=%u", writecachesize, 0),
+	MFS_OPT("mfsreadaheadsize=%u", readaheadsize, 0),
+	MFS_OPT("mfsreadaheadleng=%u", readaheadleng, 0),
+	MFS_OPT("mfsreadaheadtrigger=%u", readaheadtrigger, 0),
 	MFS_OPT("mfsioretries=%u", ioretries, 0),
 	MFS_OPT("mfsdebug", debug, 1),
 	MFS_OPT("mfsmeta", meta, 1),
@@ -203,14 +234,19 @@ static struct fuse_opt mfs_opts_stage2[] = {
 	MFS_OPT("mfsmkdircopysgid=%u", mkdircopysgid, 0),
 	MFS_OPT("mfssugidclearmode=%s", sugidclearmodestr, 0),
 	MFS_OPT("mfsattrcacheto=%lf", attrcacheto, 0),
+	MFS_OPT("mfsxattrcacheto=%lf", xattrcacheto, 0),
 	MFS_OPT("mfsentrycacheto=%lf", entrycacheto, 0),
 	MFS_OPT("mfsdirentrycacheto=%lf", direntrycacheto, 0),
+	MFS_OPT("mfsnegentrycacheto=%lf", negentrycacheto, 0),
+	MFS_OPT("mfsgroupscacheto=%lf", groupscacheto, 0),
+//	MFS_OPT("mfsaclsupport", xattraclsupport, 1),
 
 	FUSE_OPT_KEY("-m",             KEY_META),
 	FUSE_OPT_KEY("--meta",         KEY_META),
 	FUSE_OPT_KEY("-H ",            KEY_HOST),
 	FUSE_OPT_KEY("-P ",            KEY_PORT),
 	FUSE_OPT_KEY("-B ",            KEY_BIND),
+	FUSE_OPT_KEY("-L ",            KEY_PROXY),
 	FUSE_OPT_KEY("-S ",            KEY_PATH),
 	FUSE_OPT_KEY("-p",             KEY_PASSWORDASK),
 	FUSE_OPT_KEY("--password",     KEY_PASSWORDASK),
@@ -240,6 +276,7 @@ static void usage(const char *progname) {
 "    -H HOST                     equivalent to '-o mfsmaster=HOST'\n"
 "    -P PORT                     equivalent to '-o mfsport=PORT'\n"
 "    -B IP                       equivalent to '-o mfsbind=IP'\n"
+"    -L IP                       equivalent to '-o mfsproxy=IP'\n"
 "    -S PATH                     equivalent to '-o mfssubfolder=PATH'\n"
 "    -p   --password             similar to '-o mfspassword=PASSWORD', but show prompt and ask user for password\n"
 "    -n   --nostdopts            do not add standard MFS mount options: '-o " DEFAULT_OPTIONS ",fsname=MFS'\n"
@@ -265,18 +302,28 @@ static void usage(const char *progname) {
 "    -o mfscachefiles            (deprecated) equivalent to '-o mfscachemode=YES'\n"
 // "    -o mfscachefiles            allow files data to be kept in cache (dangerous in network environment)\n"
 "    -o mfsattrcacheto=SEC       set attributes cache timeout in seconds (default: 1.0)\n"
+"    -o mfsxattrcacheto=SEC      set extended attributes (xattr) cache timeout in seconds (default: 30.0)\n"
 "    -o mfsentrycacheto=SEC      set file entry cache timeout in seconds (default: 0.0)\n"
 "    -o mfsdirentrycacheto=SEC   set directory entry cache timeout in seconds (default: 1.0)\n"
+"    -o mfsnegentrycacheto=SEC   set negative entry cache timeout in seconds (default: 1.0)\n"
+"    -o mfsgroupscacheto=SEC     set supplementary groups cache timeout in seconds (default: 300.0)\n"
 "    -o mfsrlimitnofile=N        on startup mfsmount tries to change number of descriptors it can simultaneously open (default: 100000)\n"
 "    -o mfsnice=N                on startup mfsmount tries to change his 'nice' value (default: -19)\n"
 #ifdef MFS_USE_MEMLOCK
 "    -o mfsmemlock               try to lock memory\n"
 #endif
+#ifdef MFS_USE_MALLOPT
+"    -o mfslimitarenas=N         if N>0 then limit glibc malloc arenas (default: 8)\n"
+#endif
 "    -o mfswritecachesize=N      define size of write cache in MiB (default: 128)\n"
+"    -o mfsreadaheadsize=N       define size of all read ahead buffers in MiB (default: 128)\n"
+"    -o mfsreadaheadleng=N       define amount of bytes to be additionaly read (default: 1048576)\n"
+"    -o mfsreadaheadtrigger=N    define amount of bytes read sequentially that turns on read ahead (default: 10 * mfsreadaheadleng)\n"
 "    -o mfsioretries=N           define number of retries before I/O error is returned (default: 30)\n"
-"    -o mfsmaster=HOST           define mfsmaster location (default: mfsmaster)\n"
-"    -o mfsport=PORT             define mfsmaster port number (default: 9421)\n"
+"    -o mfsmaster=HOST           define mfsmaster location (default: " DEFAULT_MASTERNAME ")\n"
+"    -o mfsport=PORT             define mfsmaster port number (default: " DEFAULT_MASTER_CLIENT_PORT ")\n"
 "    -o mfsbind=IP               define source ip address for connections (default: NOT DEFINED - choosen automatically by OS)\n"
+"    -o mfsproxy=IP              define listen ip address of local master proxy for communication with tools (default: 127.0.0.1)\n"
 "    -o mfssubfolder=PATH        define subfolder to mount as root (default: /)\n"
 "    -o mfspassword=PASSWORD     authenticate to mfsmaster with password\n"
 "    -o mfsmd5pass=MD5           authenticate to mfsmaster using directly given md5 (only if mfspassword is not defined)\n"
@@ -398,6 +445,12 @@ static int mfs_opt_proc_stage2(void *data, const char *arg, int key, struct fuse
 		}
 		mfsopts.bindhost = strdup(arg+2);
 		return 0;
+	case KEY_PROXY:
+		if (mfsopts.proxyhost!=NULL) {
+			free(mfsopts.proxyhost);
+		}
+		mfsopts.proxyhost = strdup(arg+2);
+		return 0;
 	case KEY_PATH:
 		if (mfsopts.subfolder!=NULL) {
 			free(mfsopts.subfolder);
@@ -414,7 +467,7 @@ static int mfs_opt_proc_stage2(void *data, const char *arg, int key, struct fuse
 		mfsopts.nostdmountoptions = 1;
 		return 0;
 	case KEY_VERSION:
-		fprintf(stderr, "MFS version %u.%u.%u\n",VERSMAJ,VERSMID,VERSMIN);
+		fprintf(stderr, "MFS version %s\n",VERSSTR);
 		{
 			struct fuse_args helpargs = FUSE_ARGS_INIT(0, NULL);
 
@@ -444,7 +497,17 @@ static int mfs_opt_proc_stage2(void *data, const char *arg, int key, struct fuse
 static void mfs_fsinit (void *userdata, struct fuse_conn_info *conn) {
 	int *piped = (int*)userdata;
 	char s;
-	(void)conn;
+	conn->max_write = 131072;
+	conn->max_readahead = 131072;
+#if defined(FUSE_CAP_BIG_WRITES) || defined(FUSE_CAP_DONT_MASK)
+	conn->want = 0;
+#endif
+#ifdef FUSE_CAP_BIG_WRITES
+	conn->want |= FUSE_CAP_BIG_WRITES;
+#endif
+#ifdef FUSE_CAP_DONT_MASK
+	conn->want |= FUSE_CAP_DONT_MASK;
+#endif
 	if (piped[1]>=0) {
 		s=0;
 		if (write(piped[1],&s,1)!=1) {
@@ -452,6 +515,52 @@ static void mfs_fsinit (void *userdata, struct fuse_conn_info *conn) {
 		}
 		close(piped[1]);
 	}
+}
+
+int main_thread_create(pthread_t *th,const pthread_attr_t *attr,void *(*fn)(void *),void *arg) {
+	sigset_t oldset;
+	sigset_t newset;
+	int res;
+
+	sigemptyset(&newset);
+	sigaddset(&newset, SIGTERM);
+	sigaddset(&newset, SIGINT);
+	sigaddset(&newset, SIGHUP);
+	sigaddset(&newset, SIGQUIT);
+	pthread_sigmask(SIG_BLOCK, &newset, &oldset);
+	res = pthread_create(th,attr,fn,arg);
+	pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+	return res;
+}
+
+int main_minthread_create(pthread_t *th,uint8_t detached,void *(*fn)(void *),void *arg) {
+	static pthread_attr_t *thattr = NULL;
+	static uint8_t thattr_detached;
+	if (thattr == NULL) {
+		size_t mystacksize;
+		thattr = malloc(sizeof(pthread_attr_t));
+		passert(thattr);
+		zassert(pthread_attr_init(thattr));
+#ifdef PTHREAD_STACK_MIN
+		mystacksize = PTHREAD_STACK_MIN;
+		if (mystacksize < 0x100000) {
+			mystacksize = 0x100000;
+		}
+#else
+		mystacksize = 0x100000;
+#endif
+		zassert(pthread_attr_setstacksize(thattr,mystacksize));
+		thattr_detached = detached + 1; // make it different
+	}
+	if (detached != thattr_detached) {
+		if (detached) {
+			zassert(pthread_attr_setdetachstate(thattr,PTHREAD_CREATE_DETACHED));
+		} else {
+			zassert(pthread_attr_setdetachstate(thattr,PTHREAD_CREATE_JOINABLE));
+		}
+		thattr_detached = detached;
+	}
+	return main_thread_create(th,thattr,fn,arg);
 }
 
 int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
@@ -525,9 +634,25 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 #endif
 	}
 
-	rls.rlim_cur = mfsopts.nofile;
-	rls.rlim_max = mfsopts.nofile;
-	setrlimit(RLIMIT_NOFILE,&rls);
+	i = mfsopts.nofile;
+	while (1) {
+		rls.rlim_cur = i;
+		rls.rlim_max = i;
+		if (setrlimit(RLIMIT_NOFILE,&rls)<0) {
+			i /= 2;
+			if (i<1000) {
+				break;
+			}
+		} else {
+			break;
+		}
+	}
+	if (i != (int)(mfsopts.nofile)) {
+		fprintf(stderr,"can't set open file limit to %d\n",mfsopts.nofile);
+		if (i>=1000) {
+			fprintf(stderr,"open file limit set to: %d\n",i);
+		}
+	}
 
 	setpriority(PRIO_PROCESS,getpid(),mfsopts.nice);
 #ifdef MFS_USE_MEMLOCK
@@ -571,16 +696,49 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 	}
 #endif
 
+/* glibc malloc tuning */
+#ifdef MFS_USE_MALLOPT
+	if (mfsopts.limitarenas) {
+		if (!getenv("MALLOC_ARENA_MAX")) {
+			syslog(LOG_NOTICE,"setting glibc malloc arena max to 8");
+			mallopt(M_ARENA_MAX, mfsopts.limitarenas);
+		}
+		if (!getenv("MALLOC_ARENA_TEST")) {
+			syslog(LOG_NOTICE,"setting glibc malloc arena test to 1");
+			mallopt(M_ARENA_TEST, 1);
+		}
+	} else {
+		syslog(LOG_NOTICE,"setting glibc malloc arenas turned off");
+	}
+#endif /* glibc malloc tuning */
+
+	syslog(LOG_NOTICE,"monotonic clock function: %s",monotonic_method());
+	syslog(LOG_NOTICE,"monotonic clock speed: %"PRIu32" ops / 10 mili seconds",monotonic_speed());
+
+	conncache_init(200);
 	chunkloc_cache_init();
 	symlink_cache_init();
+	negentry_cache_init(mfsopts.negentrycacheto);
 //	dir_cache_init();
 	fs_init_threads(mfsopts.ioretries);
-	masterproxy_init();
+	if (masterproxy_init(mfsopts.proxyhost)<0) {
+		fs_term();
+//		dir_cache_term();
+		negentry_cache_term();
+		symlink_cache_term();
+		chunkloc_cache_term();
+		return 1;
+	}
+
+//	fs_term();
+//	negentry_cache_term();
+//	symlink_cache_term();
+//	chunkloc_cache_term();
+//	return 1;
 
 	if (mfsopts.meta==0) {
 		csdb_init();
-		read_data_init(mfsopts.ioretries);
-//		write_data_init();
+		read_data_init(mfsopts.readaheadsize*1024*1024,mfsopts.readaheadleng,mfsopts.readaheadtrigger,mfsopts.ioretries);
 		write_data_init(mfsopts.writecachesize*1024*1024,mfsopts.ioretries);
 	}
 
@@ -601,6 +759,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 		masterproxy_term();
 		fs_term();
 //		dir_cache_term();
+		negentry_cache_term();
 		symlink_cache_term();
 		chunkloc_cache_term();
 		return 1;
@@ -610,7 +769,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 		mfs_meta_init(mfsopts.debug,mfsopts.entrycacheto,mfsopts.attrcacheto);
 		se = fuse_lowlevel_new(args, &mfs_meta_oper, sizeof(mfs_meta_oper), (void*)piped);
 	} else {
-		mfs_init(mfsopts.debug,mfsopts.keepcache,mfsopts.direntrycacheto,mfsopts.entrycacheto,mfsopts.attrcacheto,mfsopts.mkdircopysgid,mfsopts.sugidclearmode);
+		mfs_init(mfsopts.debug,mfsopts.keepcache,mfsopts.direntrycacheto,mfsopts.entrycacheto,mfsopts.attrcacheto,mfsopts.xattrcacheto,mfsopts.groupscacheto,mfsopts.mkdircopysgid,mfsopts.sugidclearmode,1); //mfsopts.xattraclsupport);
 		se = fuse_lowlevel_new(args, &mfs_oper, sizeof(mfs_oper), (void*)piped);
 	}
 	if (se==NULL) {
@@ -631,6 +790,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 		masterproxy_term();
 		fs_term();
 //		dir_cache_term();
+		negentry_cache_term();
 		symlink_cache_term();
 		chunkloc_cache_term();
 		return 1;
@@ -658,6 +818,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 		masterproxy_term();
 		fs_term();
 //		dir_cache_term();
+		negentry_cache_term();
 		symlink_cache_term();
 		chunkloc_cache_term();
 		return 1;
@@ -699,6 +860,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 	masterproxy_term();
 	fs_term();
 //	dir_cache_term();
+	negentry_cache_term();
 	symlink_cache_term();
 	chunkloc_cache_term();
 	return err ? 1 : 0;
@@ -757,6 +919,19 @@ static unsigned int strncpy_escape_commas(char *dstbuff, unsigned int dstsize,ch
 	return l;
 }
 #endif
+
+void remove_mfsmount_magic(struct fuse_args *args) {
+	int i;
+	for (i=1 ; i<args->argc ; i++) {
+		if (strcmp(args->argv[i],"mfsmount_magic")==0) {
+			if (i+1 < args->argc) {
+				memmove(&args->argv[i],&args->argv[i+1],sizeof(char *)*(args->argc - i - 1));
+			}
+			args->argc--;
+			return;
+		}
+	}
+}
 
 void make_fsname(struct fuse_args *args) {
 	char fsnamearg[256];
@@ -846,12 +1021,16 @@ int main(int argc, char *argv[]) {
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_args defaultargs = FUSE_ARGS_INIT(0, NULL);
 
+#if defined(SIGPIPE) && defined(SIG_IGN)
+	signal(SIGPIPE,SIG_IGN);
+#endif
 	strerr_init();
 	mycrc32_init();
 
 	mfsopts.masterhost = NULL;
 	mfsopts.masterport = NULL;
 	mfsopts.bindhost = NULL;
+	mfsopts.proxyhost = NULL;
 	mfsopts.subfolder = NULL;
 	mfsopts.password = NULL;
 	mfsopts.md5pass = NULL;
@@ -859,6 +1038,9 @@ int main(int argc, char *argv[]) {
 	mfsopts.nice = -19;
 #ifdef MFS_USE_MEMLOCK
 	mfsopts.memlock = 0;
+#endif
+#ifdef MFS_USE_MALLOPT
+	mfsopts.limitarenas = 8;
 #endif
 	mfsopts.nostdmountoptions = 0;
 	mfsopts.meta = 0;
@@ -871,14 +1053,21 @@ int main(int argc, char *argv[]) {
 #endif
 	mfsopts.sugidclearmodestr = NULL;
 	mfsopts.donotrememberpassword = 0;
+//	mfsopts.xattraclsupport = 0;
 	mfsopts.cachefiles = 0;
 	mfsopts.cachemode = NULL;
 	mfsopts.writecachesize = 0;
+	mfsopts.readaheadsize = 0;
+	mfsopts.readaheadleng = 0;
+	mfsopts.readaheadtrigger = 0;
 	mfsopts.ioretries = 30;
 	mfsopts.passwordask = 0;
 	mfsopts.attrcacheto = 1.0;
+	mfsopts.xattrcacheto = 30.0;
 	mfsopts.entrycacheto = 0.0;
 	mfsopts.direntrycacheto = 1.0;
+	mfsopts.negentrycacheto = 1.0;
+	mfsopts.groupscacheto = 300.0;
 
 	custom_cfg = 0;
 
@@ -966,10 +1155,13 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 	if (mfsopts.masterhost==NULL) {
-		mfsopts.masterhost = strdup("mfsmaster");
+		mfsopts.masterhost = strdup(DEFAULT_MASTERNAME);
 	}
 	if (mfsopts.masterport==NULL) {
-		mfsopts.masterport = strdup("9421");
+		mfsopts.masterport = strdup(DEFAULT_MASTER_CLIENT_PORT);
+	}
+	if (mfsopts.proxyhost==NULL) {
+		mfsopts.proxyhost = strdup("127.0.0.1");
 	}
 	if (mfsopts.subfolder==NULL) {
 		mfsopts.subfolder = strdup("/");
@@ -981,12 +1173,37 @@ int main(int argc, char *argv[]) {
 		mfsopts.writecachesize=128;
 	}
 	if (mfsopts.writecachesize<16) {
-		fprintf(stderr,"write cache size to low (%u MiB) - increased to 16 MiB\n",mfsopts.writecachesize);
+		fprintf(stderr,"write cache size too low (%u MiB) - increased to 16 MiB\n",mfsopts.writecachesize);
 		mfsopts.writecachesize=16;
 	}
 	if (mfsopts.writecachesize>2048) {
-		fprintf(stderr,"write cache size to big (%u MiB) - decresed to 2048 MiB\n",mfsopts.writecachesize);
+		fprintf(stderr,"write cache size too big (%u MiB) - decresed to 2048 MiB\n",mfsopts.writecachesize);
 		mfsopts.writecachesize=2048;
+	}
+	if (mfsopts.readaheadsize==0) {
+		mfsopts.readaheadsize=128;
+	}
+	if (mfsopts.readaheadsize<16) {
+		fprintf(stderr,"read ahead size too low (%u MiB) - increased to 16 MiB\n",mfsopts.readaheadsize);
+		mfsopts.readaheadsize=16;
+	}
+	if (mfsopts.readaheadsize>2048) {
+		fprintf(stderr,"read ahead size too big (%u MiB) - decresed to 2048 MiB\n",mfsopts.readaheadsize);
+		mfsopts.readaheadsize=2048;
+	}
+	if (mfsopts.readaheadleng==0) {
+		mfsopts.readaheadleng=0x100000;
+	}
+	if (mfsopts.readaheadleng<0x20000) {
+		fprintf(stderr,"read ahead length too low (%u B) - increased to 128 KiB\n",mfsopts.readaheadleng);
+		mfsopts.readaheadleng=0x20000;
+	}
+	if (mfsopts.readaheadleng>0x1000000) {
+		fprintf(stderr,"read ahead length too big (%u B) - decresed to 16 MiB\n",mfsopts.readaheadleng);
+		mfsopts.readaheadleng=2048;
+	}
+	if (mfsopts.readaheadtrigger==0) {
+		mfsopts.readaheadtrigger=mfsopts.readaheadleng*10;
 	}
 
 	if (mfsopts.nostdmountoptions==0) {
@@ -995,6 +1212,9 @@ int main(int argc, char *argv[]) {
 
 
 	make_fsname(&args);
+	remove_mfsmount_magic(&args);
+
+//	dump_args("args_before_fuse_parse_cmdline",&args);
 
 	if (fuse_parse_cmdline(&args,&mountpoint,&mt,&fg)<0) {
 		fprintf(stderr,"see: %s -h for help\n",argv[0]);
@@ -1016,6 +1236,9 @@ int main(int argc, char *argv[]) {
 	free(mfsopts.masterport);
 	if (mfsopts.bindhost) {
 		free(mfsopts.bindhost);
+	}
+	if (mfsopts.proxyhost) {
+		free(mfsopts.proxyhost);
 	}
 	free(mfsopts.subfolder);
 	if (defaultmountpoint) {

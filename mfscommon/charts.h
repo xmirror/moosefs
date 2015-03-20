@@ -1,19 +1,15 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
 #ifndef _CHARTS_H_
@@ -46,7 +42,7 @@
 
 #define CHARTS_CONST(x) CHARTS_OP_CONST, x
 #define CHARTS_ADD(x,y) x, y, CHARTS_OP_ADD
-#define CHARTS_SUB(x,y) x, y, CHARTS_OP_ADD
+#define CHARTS_SUB(x,y) x, y, CHARTS_OP_SUB
 #define CHARTS_MIN(x,y) x, y, CHARTS_OP_MIN
 #define CHARTS_MAX(x,y) x, y, CHARTS_OP_MAX
 #define CHARTS_MUL(x,y) x, y, CHARTS_OP_MUL
@@ -112,9 +108,9 @@ typedef struct _estatdef {
 };
 
 // enchanced data charts (up to 3 counters on one chart represented by three colors)
-// c1_def - green
-// c2_def - dark green
-// c3_def - very dark green
+// c1_def - light
+// c2_def - medium
+// c3_def - dark
 // source data for given color can be defined as simple chart or calculation from above definitions
 
 /* c1_def , c2_def , c3_def , join mode , percent , scale , multiplier , divisor */
@@ -129,9 +125,9 @@ typedef struct _estatdef {
 
 uint64_t charts_get (uint32_t chartnumber,uint32_t count);
 
-uint32_t charts_datasize(uint32_t chartid);
-void charts_makedata(uint8_t *buff,uint32_t chartid);
-uint32_t charts_make_png(uint32_t chartid);
+uint32_t charts_datasize(uint32_t chartid,uint32_t maxentries);
+void charts_makedata(uint8_t *buff,uint32_t chartid,uint32_t maxentries);
+uint32_t charts_make_png(uint32_t chartid,uint32_t chartwidth,uint32_t chartheight);
 void charts_get_png(uint8_t *buff);
 
 void charts_add (uint64_t *data,uint32_t datats);

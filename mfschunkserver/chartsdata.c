@@ -1,22 +1,20 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <time.h>
 #include <stdlib.h>
@@ -25,17 +23,20 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <syslog.h>
-#include <sys/time.h>
 #include <errno.h>
-#include <sys/resource.h>
 
 #include "charts.h"
 #include "main.h"
 
+#include "bgjobs.h"
 #include "csserv.h"
+#include "mainserv.h"
 #include "masterconn.h"
 #include "hddspacemgr.h"
 #include "replicator.h"
+
+#include "cpuusage.h"
+#include "memusage.h"
 
 #define CHARTS_FILENAME "csstats.mfs"
 
@@ -43,14 +44,14 @@
 #define CHARTS_SCPU 1
 #define CHARTS_MASTERIN 2
 #define CHARTS_MASTEROUT 3
-#define CHARTS_CSCONNIN 4
-#define CHARTS_CSCONNOUT 5
+#define CHARTS_CSREPIN 4
+#define CHARTS_CSREPOUT 5
 #define CHARTS_CSSERVIN 6
 #define CHARTS_CSSERVOUT 7
-#define CHARTS_BYTESR 8
-#define CHARTS_BYTESW 9
-#define CHARTS_LLOPR 10
-#define CHARTS_LLOPW 11
+#define CHARTS_HDRBYTESR 8
+#define CHARTS_HDRBYTESW 9
+#define CHARTS_HDRLLOPR 10
+#define CHARTS_HDRLLOPW 11
 #define CHARTS_DATABYTESR 12
 #define CHARTS_DATABYTESW 13
 #define CHARTS_DATALLOPR 14
@@ -67,60 +68,63 @@
 #define CHARTS_TRUNCATE 25
 #define CHARTS_DUPTRUNC 26
 #define CHARTS_TEST 27
-#define CHARTS_CHUNKIOJOBS 28
-#define CHARTS_CHUNKOPJOBS 29
+#define CHARTS_LOAD 28
+#define CHARTS_MEMORY_RSS 29
+#define CHARTS_MEMORY_VIRT 30
 
-#define CHARTS 30
+#define CHARTS 32
 
 /* name , join mode , percent , scale , multiplier , divisor */
 #define STATDEFS { \
-	{"ucpu"         ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,60}, \
-	{"scpu"         ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,60}, \
-	{"masterin"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"masterout"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"csconnin"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"csconnout"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"csservin"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"csservout"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{"bytesr"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{"bytesw"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{"llopr"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"llopw"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"databytesr"   ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{"databytesw"   ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{"datallopr"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"datallopw"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"hlopr"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"hlopw"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"rtime"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MICRO,   1,60}, \
-	{"wtime"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MICRO,   1,60}, \
-	{"repl"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"create"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"delete"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"version"      ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"duplicate"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"truncate"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"duptrunc"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"test"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"chunkiojobs"  ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"chunkopjobs"  ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{NULL           ,0              ,0,0                 ,   0, 0}  \
+	{"ucpu"         ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,   60}, \
+	{"scpu"         ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,   60}, \
+	{"masterin"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"masterout"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"csrepin"      ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"csrepout"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"csservin"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"csservout"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,   60}, \
+	{"bytesr"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,   60}, \
+	{"bytesw"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,   60}, \
+	{"llopr"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"llopw"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"databytesr"   ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,   60}, \
+	{"databytesw"   ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,   60}, \
+	{"datallopr"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"datallopw"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"hlopr"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"hlopw"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"rntime"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MICRO,   1,60000}, \
+	{"wntime"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MICRO,   1,60000}, \
+	{"repl"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"create"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"delete"       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"version"      ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"duplicate"    ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"truncate"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"duptrunc"     ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"test"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"load"         ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"memoryrss"    ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{"memoryvirt"   ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1,    1}, \
+	{NULL           ,0              ,0,0                 ,   0,    0}  \
 };
 
 #define CALCDEFS { \
+	CHARTS_CALCDEF(CHARTS_MAX(CHARTS_CONST(0),CHARTS_SUB(CHARTS_MEMORY_VIRT,CHARTS_MEMORY_RSS))), \
 	CHARTS_DEFS_END \
 };
 
 /* c1_def , c2_def , c3_def , join mode , percent , scale , multiplier , divisor */
 #define ESTATDEFS { \
 	{CHARTS_DIRECT(CHARTS_UCPU)        ,CHARTS_DIRECT(CHARTS_SCPU)        ,CHARTS_NONE                       ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,60}, \
-	{CHARTS_DIRECT(CHARTS_CSSERVIN)    ,CHARTS_DIRECT(CHARTS_CSCONNIN)    ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{CHARTS_DIRECT(CHARTS_CSSERVOUT)   ,CHARTS_DIRECT(CHARTS_CSCONNOUT)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
-	{CHARTS_DIRECT(CHARTS_BYTESR)      ,CHARTS_DIRECT(CHARTS_DATABYTESR)  ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{CHARTS_DIRECT(CHARTS_BYTESW)      ,CHARTS_DIRECT(CHARTS_DATABYTESW)  ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
-	{CHARTS_DIRECT(CHARTS_LLOPR)       ,CHARTS_DIRECT(CHARTS_DATALLOPR)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{CHARTS_DIRECT(CHARTS_LLOPW)       ,CHARTS_DIRECT(CHARTS_DATALLOPW)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{CHARTS_DIRECT(CHARTS_CHUNKOPJOBS) ,CHARTS_DIRECT(CHARTS_CHUNKIOJOBS) ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{CHARTS_DIRECT(CHARTS_CSREPIN)     ,CHARTS_DIRECT(CHARTS_CSSERVIN)    ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
+	{CHARTS_DIRECT(CHARTS_CSREPOUT)    ,CHARTS_DIRECT(CHARTS_CSSERVOUT)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
+	{CHARTS_DIRECT(CHARTS_HDRBYTESR)   ,CHARTS_DIRECT(CHARTS_DATABYTESR)  ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
+	{CHARTS_DIRECT(CHARTS_HDRBYTESW)   ,CHARTS_DIRECT(CHARTS_DATABYTESW)  ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
+	{CHARTS_DIRECT(CHARTS_HDRLLOPR)    ,CHARTS_DIRECT(CHARTS_DATALLOPR)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{CHARTS_DIRECT(CHARTS_HDRLLOPW)    ,CHARTS_DIRECT(CHARTS_DATALLOPW)   ,CHARTS_NONE                       ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{CHARTS_CALC(0)                    ,CHARTS_DIRECT(CHARTS_MEMORY_RSS)  ,CHARTS_NONE                       ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{CHARTS_NONE                       ,CHARTS_NONE                       ,CHARTS_NONE                       ,0              ,0,0                 ,   0, 0}  \
 };
 
@@ -128,103 +132,50 @@ static const uint32_t calcdefs[]=CALCDEFS
 static const statdef statdefs[]=STATDEFS
 static const estatdef estatdefs[]=ESTATDEFS
 
-static struct itimerval it_set;
-
 void chartsdata_refresh(void) {
 	uint64_t data[CHARTS];
 	uint64_t bin,bout;
 	uint32_t i,opr,opw,dbr,dbw,dopr,dopw,repl;
 	uint32_t op_cr,op_de,op_ve,op_du,op_tr,op_dt,op_te;
-	uint32_t csservjobs,masterjobs;
-	struct itimerval uc,pc;
-	uint32_t ucusec,pcusec;
-//	struct rusage sru,chru;
-//	long ru_nswap,ru_minflt,ru_majflt,ru_inblock,ru_oublock,ru_nvcsw,ru_nivcsw;
-//	static long l_nswap=0,l_minflt=0,l_majflt=0,l_inblock=0,l_oublock=0,l_nvcsw=0,l_nivcsw=0;
+	uint32_t jobs;
+	uint64_t scpu,ucpu;
+	uint64_t rss,virt;
 
 	for (i=0 ; i<CHARTS ; i++) {
-		data[i]=0;
+		data[i]=CHARTS_NODATA;
 	}
 
-//	getrusage(RUSAGE_SELF,&sru);
-//	getrusage(RUSAGE_CHILDREN,&chru);
+	cpu_used(&scpu,&ucpu);
 
-//	ru_minflt = sru.ru_minflt + chru.ru_minflt;
-//	ru_majflt = sru.ru_majflt + chru.ru_majflt;
-//	ru_nswap = sru.ru_nswap + chru.ru_nswap;
-//	ru_inblock = sru.ru_inblock + chru.ru_inblock;
-//	ru_oublock = sru.ru_oublock + chru.ru_oublock;
-//	ru_nvcsw = sru.ru_nvcsw + chru.ru_nvcsw;
-//	ru_nivcsw = sru.ru_nivcsw + chru.ru_nivcsw;
-//	data[CHARTS_MINFLT] = ru_minflt - l_minflt;
-//	data[CHARTS_MAJFLT] = ru_majflt - l_majflt;
-//	data[CHARTS_NSWAP] = ru_nswap - l_nswap;
-//	data[CHARTS_INBLOCK] = ru_inblock - l_inblock;
-//	data[CHARTS_OUBLOCK] = ru_oublock - l_oublock;
-//	data[CHARTS_NVCSW] = ru_nvcsw - l_nvcsw;
-//	data[CHARTS_NIVCSW] = ru_nivcsw - l_nivcsw;
-//	l_minflt = ru_minflt;
-//	l_majflt = ru_majflt;
-//	l_nswap = ru_nswap;
-//	l_inblock = ru_inblock;
-//	l_oublock = ru_oublock;
-//	l_nvcsw = ru_nvcsw;
-//	l_nivcsw = ru_nivcsw;
-
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
-
-	if (uc.it_value.tv_sec<=999) {	// on fucken linux timers can go backward !!!
-		uc.it_value.tv_sec = 999-uc.it_value.tv_sec;
-		uc.it_value.tv_usec = 999999-uc.it_value.tv_usec;
-	} else {
-		uc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
-	}
-	if (pc.it_value.tv_sec<=999) {	// as abowe - who the hell has invented this stupid os !!!
-		pc.it_value.tv_sec = 999-pc.it_value.tv_sec;
-		pc.it_value.tv_usec = 999999-pc.it_value.tv_usec;
-	} else {
-		pc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
+	if (scpu>0 || ucpu>0) {
+		data[CHARTS_UCPU] = (ucpu*6)/100;
+		data[CHARTS_SCPU] = (scpu*6)/100;
 	}
 
-	ucusec = uc.it_value.tv_sec*1000000+uc.it_value.tv_usec;
-	pcusec = pc.it_value.tv_sec*1000000+pc.it_value.tv_usec;
-
-	if (pcusec>ucusec) {
-		pcusec-=ucusec;
-	} else {
-		pcusec=0;
+	if (mem_used(&rss,&virt)) {
+		data[CHARTS_MEMORY_RSS] = rss;
+		data[CHARTS_MEMORY_VIRT] = virt;
 	}
-	data[CHARTS_UCPU] = ucusec;
-	data[CHARTS_SCPU] = pcusec;
 
-	masterconn_stats(&bin,&bout,&masterjobs);
-	data[CHARTS_MASTERIN]=bin;
-	data[CHARTS_MASTEROUT]=bout;
-	data[CHARTS_CHUNKOPJOBS]=masterjobs;
-//	cstocsconn_stats(&bin,&bout);
-//	data[CHARTS_CSCONNIN]=bin;
-//	data[CHARTS_CSCONNOUT]=bout;
-	data[CHARTS_CSCONNIN]=0;
-	data[CHARTS_CSCONNOUT]=0;
-	csserv_stats(&bin,&bout,&opr,&opw,&csservjobs);
-	data[CHARTS_CSSERVIN]=bin;
-	data[CHARTS_CSSERVOUT]=bout;
-	data[CHARTS_CHUNKIOJOBS]=csservjobs;
+	masterconn_stats(data+CHARTS_MASTERIN,data+CHARTS_MASTEROUT);
+	job_stats(&jobs);
+	data[CHARTS_LOAD]=jobs;
+	csserv_stats(data+CHARTS_CSSERVIN,data+CHARTS_CSSERVOUT);
+	mainserv_stats(&bin,&bout,&opr,&opw);
+	data[CHARTS_CSSERVIN]+=bin;
+	data[CHARTS_CSSERVOUT]+=bout;
 	data[CHARTS_HLOPR]=opr;
 	data[CHARTS_HLOPW]=opw;
 	hdd_stats(&bin,&bout,&opr,&opw,&dbr,&dbw,&dopr,&dopw,data+CHARTS_RTIME,data+CHARTS_WTIME);
-	data[CHARTS_BYTESR]=bin;
-	data[CHARTS_BYTESW]=bout;
-	data[CHARTS_LLOPR]=opr;
-	data[CHARTS_LLOPW]=opw;
+	data[CHARTS_HDRBYTESR]=bin;
+	data[CHARTS_HDRBYTESW]=bout;
+	data[CHARTS_HDRLLOPR]=opr;
+	data[CHARTS_HDRLLOPW]=opw;
 	data[CHARTS_DATABYTESR]=dbr;
 	data[CHARTS_DATABYTESW]=dbw;
 	data[CHARTS_DATALLOPR]=dopr;
 	data[CHARTS_DATALLOPW]=dopw;
-	replicator_stats(&repl);
+	replicator_stats(data+CHARTS_CSREPIN,data+CHARTS_CSREPOUT,&repl);
 	data[CHARTS_REPL]=repl;
 	hdd_op_stats(&op_cr,&op_de,&op_ve,&op_du,&op_tr,&op_dt,&op_te);
 	data[CHARTS_CREATE]=op_cr;
@@ -249,17 +200,10 @@ void chartsdata_store(void) {
 }
 
 int chartsdata_init (void) {
-	struct itimerval uc,pc;
+	cpu_init();
 
-	it_set.it_interval.tv_sec = 0;
-	it_set.it_interval.tv_usec = 0;
-	it_set.it_value.tv_sec = 999;
-	it_set.it_value.tv_usec = 999999;
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
-
-	main_timeregister(TIMEMODE_RUN_LATE,60,0,chartsdata_refresh);
-	main_timeregister(TIMEMODE_RUN_LATE,3600,0,chartsdata_store);
-	main_destructregister(chartsdata_term);
+	main_time_register(60,0,chartsdata_refresh);
+	main_time_register(3600,0,chartsdata_store);
+	main_destruct_register(chartsdata_term);
 	return charts_init(calcdefs,statdefs,estatdefs,CHARTS_FILENAME);
 }

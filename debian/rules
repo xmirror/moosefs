@@ -115,15 +115,15 @@ binary-common:
 	dh_installinit
 	dh_installman
 	dh_link
-	dh_strip
+	dh_strip --dbg-package=moosefs-ce-dbg
 	dh_compress
 	dh_fixperms
 #	dh_makeshlibs
 	dh_installdeb
 	dh_shlibdeps
-#	dh_shlibdeps -Lmfs-master
-#	dh_shlibdeps -Lmfs-chunkserver
-#	dh_shlibdeps -Lmfs-client
+#	dh_shlibdeps -Lmoosefs_pro-master
+#	dh_shlibdeps -Lmoosefs_pro-chunkserver
+#	dh_shlibdeps -Lmoosefs_pro-client
 	dh_gencontrol
 	dh_md5sums
 	dh_builddeb
@@ -136,4 +136,5 @@ binary-arch: build-arch install-arch
 	$(MAKE) -f debian/rules DH_OPTIONS=-s binary-common
 
 binary: binary-arch binary-indep
-.PHONY: build clean binary-indep binary-arch binary install install-indep install-arch 
+
+.PHONY: build clean binary-indep binary-arch binary install install-indep install-arch

@@ -1,22 +1,20 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
 
    This file is part of MooseFS.
 
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +36,7 @@
 #include "datapack.h"
 #include "massert.h"
 #include "mfsstrerr.h"
+#include "clocks.h"
 
 #include "replicator.h"
 
@@ -77,14 +76,32 @@ typedef struct _replication {
 	repsrc *repsources;
 } replication;
 
-static uint32_t stats_repl=0;
+static uint32_t stats_repl = 0;
+static uint64_t stats_bytesin = 0;
+static uint64_t stats_bytesout = 0;
 static pthread_mutex_t statslock = PTHREAD_MUTEX_INITIALIZER;
 
-void replicator_stats(uint32_t *repl) {
+void replicator_stats(uint64_t *bin,uint64_t *bout,uint32_t *repl) {
 	pthread_mutex_lock(&statslock);
+	*bin = stats_bytesin;
+	*bout = stats_bytesout;
 	*repl = stats_repl;
-	stats_repl=0;
+	stats_repl = 0;
+	stats_bytesin = 0;
+	stats_bytesout = 0;
 	pthread_mutex_unlock(&statslock);
+}
+
+static inline void replicator_bytesin(uint64_t bytes) {
+	zassert(pthread_mutex_lock(&statslock));
+	stats_bytesin += bytes;
+	zassert(pthread_mutex_unlock(&statslock));
+}
+
+static inline void replicator_bytesout(uint64_t bytes) {
+	zassert(pthread_mutex_lock(&statslock));
+	stats_bytesout += bytes;
+	zassert(pthread_mutex_unlock(&statslock));
 }
 
 static void xordata(uint8_t *dst,const uint8_t *src,uint32_t leng) {
@@ -139,6 +156,7 @@ static void xordata(uint8_t *dst,const uint8_t *src,uint32_t leng) {
 
 static int rep_read(repsrc *rs) {
 	int32_t i;
+	uint32_t type;
 	uint32_t size;
 	const uint8_t *ptr;
 	while (rs->bytesleft>0) {
@@ -148,12 +166,13 @@ static int rep_read(repsrc *rs) {
 			return -1;
 		}
 		if (i<0) {
-			if (errno!=EAGAIN) {
+			if (ERRNO_ERROR) {
 				mfs_errlog_silent(LOG_NOTICE,"replicator: read error");
 				return -1;
 			}
 			return 0;
 		}
+		replicator_bytesin(i);
 //		stats_bytesin+=i;
 		rs->startptr+=i;
 		rs->bytesleft-=i;
@@ -163,8 +182,14 @@ static int rep_read(repsrc *rs) {
 		}
 
 		if (rs->mode==HEADER) {
-			ptr = rs->hdrbuff+4;
+			ptr = rs->hdrbuff;
+			type = get32bit(&ptr);
 			size = get32bit(&ptr);
+			if (type==ANTOAN_NOP && size==0) { // NOP
+				rs->startptr = rs->hdrbuff;
+				rs->bytesleft = 8;
+				return 0;
+			}
 
 			if (rs->packet) {
 				free(rs->packet);
@@ -189,9 +214,9 @@ static int rep_read(repsrc *rs) {
 
 static int rep_receive_all_packets(replication *r,uint32_t msecto) {
 	uint8_t i,l;
-	struct timeval tvb,tv;
+	uint64_t st;
 	uint32_t msec;
-	gettimeofday(&tvb,NULL);
+	st = monotonic_useconds();
 	for (;;) {
 		l=1;
 		for (i=0 ; i<r->srccnt ; i++) {
@@ -205,20 +230,13 @@ static int rep_receive_all_packets(replication *r,uint32_t msecto) {
 		if (l) {	// finished
 			return 0;
 		}
-		gettimeofday(&tv,NULL);
-		if (tv.tv_usec < tvb.tv_usec) {
-			tv.tv_usec+=1000000;
-			tv.tv_sec--;
-		}
-		tv.tv_sec-=tvb.tv_sec;
-		tv.tv_usec-=tvb.tv_usec;
-		msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+		msec = (monotonic_useconds()-st)/1000;
 		if (msec>=msecto) {
 			syslog(LOG_NOTICE,"replicator: receive timed out");
 			return -1; // timed out
 		}
 		if (poll(r->fds,r->srccnt,msecto-msec)<0) {
-			if (errno!=EINTR && errno!=EAGAIN) {
+			if (errno!=EINTR && ERRNO_ERROR) {
 				mfs_errlog_silent(LOG_NOTICE,"replicator: poll error");
 				return -1;
 			}
@@ -270,12 +288,13 @@ static int rep_write(repsrc *rs) {
 		return -1;
 	}
 	if (i<0) {
-		if (errno!=EAGAIN) {
+		if (ERRNO_ERROR) {
 			mfs_errlog_silent(LOG_NOTICE,"replicator: write error");
 			return -1;
 		}
 		return 0;
 	}
+	replicator_bytesout(i);
 //	stats_bytesin+=i;
 	rs->startptr+=i;
 	rs->bytesleft-=i;
@@ -284,9 +303,9 @@ static int rep_write(repsrc *rs) {
 
 static int rep_send_all_packets(replication *r,uint32_t msecto) {
 	uint8_t i,l;
-	struct timeval tvb,tv;
+	uint64_t st;
 	uint32_t msec;
-	gettimeofday(&tvb,NULL);
+	st = monotonic_useconds();
 	for (;;) {
 		l=1;
 		for (i=0 ; i<r->srccnt ; i++) {
@@ -300,20 +319,13 @@ static int rep_send_all_packets(replication *r,uint32_t msecto) {
 		if (l) {	// finished
 			return 0;
 		}
-		gettimeofday(&tv,NULL);
-		if (tv.tv_usec < tvb.tv_usec) {
-			tv.tv_usec+=1000000;
-			tv.tv_sec--;
-		}
-		tv.tv_sec-=tvb.tv_sec;
-		tv.tv_usec-=tvb.tv_usec;
-		msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+		msec = (monotonic_useconds()-st)/1000;
 		if (msec>=msecto) {
 			syslog(LOG_NOTICE,"replicator: send timed out");
 			return -1; // timed out
 		}
 		if (poll(r->fds,r->srccnt,msecto-msec)<0) {
-			if (errno!=EINTR && errno!=EAGAIN) {
+			if (errno!=EINTR && ERRNO_ERROR) {
 				mfs_errlog_silent(LOG_NOTICE,"replicator: poll error");
 				return -1;
 			}
@@ -335,9 +347,9 @@ static int rep_send_all_packets(replication *r,uint32_t msecto) {
 
 static int rep_wait_for_connection(replication *r,uint32_t msecto) {
 	uint8_t i,l;
-	struct timeval tvb,tv;
+	uint64_t st;
 	uint32_t msec;
-	gettimeofday(&tvb,NULL);
+	st = monotonic_useconds();
 	for (;;) {
 		l=1;
 		for (i=0 ; i<r->srccnt ; i++) {
@@ -351,20 +363,13 @@ static int rep_wait_for_connection(replication *r,uint32_t msecto) {
 		if (l) {	// finished
 			return 0;
 		}
-		gettimeofday(&tv,NULL);
-		if (tv.tv_usec < tvb.tv_usec) {
-			tv.tv_usec+=1000000;
-			tv.tv_sec--;
-		}
-		tv.tv_sec-=tvb.tv_sec;
-		tv.tv_usec-=tvb.tv_usec;
-		msec = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+		msec = (monotonic_useconds()-st)/1000;
 		if (msec>=msecto) {
 			syslog(LOG_NOTICE,"replicator: connect timed out");
 			return -1; // timed out
 		}
 		if (poll(r->fds,r->srccnt,msecto-msec)<0) {
-			if (errno!=EINTR && errno!=EAGAIN) {
+			if (errno!=EINTR && ERRNO_ERROR) {
 				mfs_errlog_silent(LOG_NOTICE,"replicator: poll error");
 				return -1;
 			}
@@ -499,7 +504,7 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 		return ERROR_CANTCONNECT;
 	}
 // open chunk
-	status = hdd_open(chunkid);
+	status = hdd_open(chunkid,0);
 	if (status!=STATUS_OK) {
 		syslog(LOG_NOTICE,"replicator: hdd_open status: %s",mfsstrerr(status));
 		rep_cleanup(&r);
@@ -508,7 +513,7 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 	r.opened = 1;
 // get block numbers
 	for (i=0 ; i<srccnt ; i++) {
-		wptr = rep_create_packet(r.repsources+i,CSTOCS_GET_CHUNK_BLOCKS,8+4);
+		wptr = rep_create_packet(r.repsources+i,ANTOCS_GET_CHUNK_BLOCKS,8+4);
 		if (wptr==NULL) {
 			syslog(LOG_NOTICE,"replicator: out of memory");
 			rep_cleanup(&r);
@@ -532,7 +537,7 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 		rep_cleanup(&r);
 		return ERROR_DISCONNECTED;
 	}
-// get block no
+// get # of blocks
 	blocks = 0;
 	for (i=0 ; i<srccnt ; i++) {
 		uint32_t type,size;
@@ -540,12 +545,14 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 		uint32_t pver;
 		uint16_t pblocks;
 		uint8_t pstatus;
+		uint32_t ip;
 		rptr = r.repsources[i].hdrbuff;
 		type = get32bit(&rptr);
 		size = get32bit(&rptr);
 		rptr = r.repsources[i].packet;
-		if (rptr==NULL || type!=CSTOCS_GET_CHUNK_BLOCKS_STATUS || size!=15) {
-			syslog(LOG_WARNING,"replicator: got wrong answer (type/size) from (%08"PRIX32":%04"PRIX16")",r.repsources[i].ip,r.repsources[i].port);
+		ip = r.repsources[i].ip;
+		if (rptr==NULL || type!=CSTOAN_CHUNK_BLOCKS || size!=15) {
+			syslog(LOG_WARNING,"replicator,get # of blocks: got wrong answer (type:0x%08"PRIX32"/size:0x%08"PRIX32") from (%u.%u.%u.%u:%04"PRIX16")",type,size,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 			rep_cleanup(&r);
 			return ERROR_DISCONNECTED;
 		}
@@ -554,17 +561,17 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 		pblocks = get16bit(&rptr);
 		pstatus = get8bit(&rptr);
 		if (pchid!=r.repsources[i].chunkid) {
-			syslog(LOG_WARNING,"replicator: got wrong answer (chunk_status:chunkid:%"PRIX64"/%"PRIX64") from (%08"PRIX32":%04"PRIX16")",pchid,r.repsources[i].chunkid,r.repsources[i].ip,r.repsources[i].port);
+			syslog(LOG_WARNING,"replicator,get # of blocks: got wrong answer (chunk_status:chunkid:%"PRIX64"/%"PRIX64") from (%u.%u.%u.%u:%04"PRIX16")",pchid,r.repsources[i].chunkid,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 			rep_cleanup(&r);
 			return ERROR_WRONGCHUNKID;
 		}
 		if (pver!=r.repsources[i].version) {
-			syslog(LOG_WARNING,"replicator: got wrong answer (chunk_status:version:%"PRIX32"/%"PRIX32") from (%08"PRIX32":%04"PRIX16")",pver,r.repsources[i].version,r.repsources[i].ip,r.repsources[i].port);
+			syslog(LOG_WARNING,"replicator,get # of blocks: got wrong answer (chunk_status:version:%"PRIX32"/%"PRIX32") from (%u.%u.%u.%u:%04"PRIX16")",pver,r.repsources[i].version,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 			rep_cleanup(&r);
 			return ERROR_WRONGVERSION;
 		}
 		if (pstatus!=STATUS_OK) {
-			syslog(LOG_NOTICE,"replicator: got status: %s from (%08"PRIX32":%04"PRIX16")",mfsstrerr(pstatus),r.repsources[i].ip,r.repsources[i].port);
+			syslog(LOG_NOTICE,"replicator,get # of blocks: got status: %s from (%u.%u.%u.%u:%04"PRIX16")",mfsstrerr(pstatus),(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 			rep_cleanup(&r);
 			return pstatus;
 		}
@@ -625,10 +632,12 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 				uint16_t poffset;
 				uint32_t psize;
 				uint8_t pstatus;
+				uint32_t ip;
 				rptr = r.repsources[i].hdrbuff;
 				type = get32bit(&rptr);
 				size = get32bit(&rptr);
 				rptr = r.repsources[i].packet;
+				ip = r.repsources[i].ip;
 				if (rptr==NULL) {
 					rep_cleanup(&r);
 					return ERROR_DISCONNECTED;
@@ -636,16 +645,18 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 				if (type==CSTOCL_READ_STATUS && size==9) {
 					pchid = get64bit(&rptr);
 					pstatus = get8bit(&rptr);
-					rep_cleanup(&r);
 					if (pchid!=r.repsources[i].chunkid) {
-						syslog(LOG_WARNING,"replicator: got wrong answer (read_status:chunkid:%"PRIX64"/%"PRIX64") from (%08"PRIX32":%04"PRIX16")",pchid,r.repsources[i].chunkid,r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (read_status:chunkid:%"PRIX64"/%"PRIX64") from (%u.%u.%u.%u:%04"PRIX16")",pchid,r.repsources[i].chunkid,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
+						rep_cleanup(&r);
 						return ERROR_WRONGCHUNKID;
 					}
 					if (pstatus==STATUS_OK) {	// got status too early or got incorrect packet
-						syslog(LOG_WARNING,"replicator: got unexpected ok status from (%08"PRIX32":%04"PRIX16")",r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got unexpected ok status from (%u.%u.%u.%u:%04"PRIX16")",(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
+						rep_cleanup(&r);
 						return ERROR_DISCONNECTED;
 					}
-					syslog(LOG_NOTICE,"replicator: got status: %s from (%08"PRIX32":%04"PRIX16")",mfsstrerr(pstatus),r.repsources[i].ip,r.repsources[i].port);
+					syslog(LOG_NOTICE,"replicator,read chunks: got status: %s from (%u.%u.%u.%u:%04"PRIX16")",mfsstrerr(pstatus),(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
+					rep_cleanup(&r);
 					return pstatus;
 				} else if (type==CSTOCL_READ_DATA && size==20+MFSBLOCKSIZE) {
 					pchid = get64bit(&rptr);
@@ -653,27 +664,27 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 					poffset = get16bit(&rptr);
 					psize = get32bit(&rptr);
 					if (pchid!=r.repsources[i].chunkid) {
-						syslog(LOG_WARNING,"replicator: got wrong answer (read_data:chunkid:%"PRIX64"/%"PRIX64") from (%08"PRIX32":%04"PRIX16")",pchid,r.repsources[i].chunkid,r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (read_data:chunkid:%"PRIX64"/%"PRIX64") from (%u.%u.%u.%u:%04"PRIX16")",pchid,r.repsources[i].chunkid,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 						rep_cleanup(&r);
 						return ERROR_WRONGCHUNKID;
 					}
 					if (pblocknum!=b) {
-						syslog(LOG_WARNING,"replicator: got wrong answer (read_data:blocknum:%"PRIu16"/%"PRIu16") from (%08"PRIX32":%04"PRIX16")",pblocknum,b,r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (read_data:blocknum:%"PRIu16"/%"PRIu16") from (%u.%u.%u.%u:%04"PRIX16")",pblocknum,b,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 						rep_cleanup(&r);
 						return ERROR_DISCONNECTED;
 					}
 					if (poffset!=0) {
-						syslog(LOG_WARNING,"replicator: got wrong answer (read_data:offset:%"PRIu16") from (%08"PRIX32":%04"PRIX16")",poffset,r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (read_data:offset:%"PRIu16") from (%u.%u.%u.%u:%04"PRIX16")",poffset,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 						rep_cleanup(&r);
 						return ERROR_WRONGOFFSET;
 					}
 					if (psize!=MFSBLOCKSIZE) {
-						syslog(LOG_WARNING,"replicator: got wrong answer (read_data:size:%"PRIu32") from (%08"PRIX32":%04"PRIX16")",psize,r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (read_data:size:%"PRIu32") from (%u.%u.%u.%u:%04"PRIX16")",psize,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 						rep_cleanup(&r);
 						return ERROR_WRONGSIZE;
 					}
 				} else {
-					syslog(LOG_WARNING,"replicator: got wrong answer (type/size) from (%08"PRIX32":%04"PRIX16")",r.repsources[i].ip,r.repsources[i].port);
+					syslog(LOG_WARNING,"replicator,read chunks: got wrong answer (type:0x%08"PRIX32"/size:0x%08"PRIX32") from (%u.%u.%u.%u:%04"PRIX16")",type,size,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 					rep_cleanup(&r);
 					return ERROR_DISCONNECTED;
 				}
@@ -706,6 +717,8 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 			}
 			for (i=0 ; i<srccnt ; i++) {
 				if (r.repsources[i].mode!=IDLE) {
+					uint32_t ip;
+					ip = r.repsources[i].ip;
 					rptr = r.repsources[i].packet;
 					rptr+=16;	// skip chunkid,blockno,offset and size
 					if (first) {
@@ -716,7 +729,7 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 					}
 					crc = get32bit(&rptr);
 					if (crc!=mycrc32(0,rptr,MFSBLOCKSIZE)) {
-						syslog(LOG_WARNING,"replicator: received data with wrong checksum from (%08"PRIX32":%04"PRIX16")",r.repsources[i].ip,r.repsources[i].port);
+						syslog(LOG_WARNING,"replicator: received data with wrong checksum from (%u.%u.%u.%u:%04"PRIX16")",(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 						rep_cleanup(&r);
 						return ERROR_CRC;
 					}
@@ -757,24 +770,26 @@ uint8_t replicate(uint64_t chunkid,uint32_t version,uint8_t srccnt,const uint8_t
 			uint32_t type,size;
 			uint64_t pchid;
 			uint8_t pstatus;
+			uint32_t ip;
 			rptr = r.repsources[i].hdrbuff;
 			type = get32bit(&rptr);
 			size = get32bit(&rptr);
 			rptr = r.repsources[i].packet;
+			ip = r.repsources[i].ip;
 			if (rptr==NULL || type!=CSTOCL_READ_STATUS || size!=9) {
-				syslog(LOG_WARNING,"replicator: got wrong answer (type/size) from (%08"PRIX32":%04"PRIX16")",r.repsources[i].ip,r.repsources[i].port);
+				syslog(LOG_WARNING,"replicator,check status: got wrong answer (type:0x%08"PRIX32"/size:0x%08"PRIX32") from (%u.%u.%u.%u:%04"PRIX16")",type,size,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 				rep_cleanup(&r);
 				return ERROR_DISCONNECTED;
 			}
 			pchid = get64bit(&rptr);
 			pstatus = get8bit(&rptr);
 			if (pchid!=r.repsources[i].chunkid) {
-				syslog(LOG_WARNING,"replicator: got wrong answer (read_status:chunkid:%"PRIX64"/%"PRIX64") from (%08"PRIX32":%04"PRIX16")",pchid,r.repsources[i].chunkid,r.repsources[i].ip,r.repsources[i].port);
+				syslog(LOG_WARNING,"replicator,check status: got wrong answer (read_status:chunkid:%"PRIX64"/%"PRIX64") from (%u.%u.%u.%u:%04"PRIX16")",pchid,r.repsources[i].chunkid,(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 				rep_cleanup(&r);
 				return ERROR_WRONGCHUNKID;
 			}
 			if (pstatus!=STATUS_OK) {
-				syslog(LOG_NOTICE,"replicator: got status: %s from (%08"PRIX32":%04"PRIX16")",mfsstrerr(pstatus),r.repsources[i].ip,r.repsources[i].port);
+				syslog(LOG_NOTICE,"replicator,check status: got status: %s from (%u.%u.%u.%u:%04"PRIX16")",mfsstrerr(pstatus),(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,r.repsources[i].port);
 				rep_cleanup(&r);
 				return pstatus;
 			}

@@ -1,13 +1,31 @@
+/*
+   Copyright Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+
+   This file is part of MooseFS.
+
+   READ THIS BEFORE INSTALLING THE SOFTWARE. BY INSTALLING,
+   ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
+   THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
+   VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
+   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
+   PROPERTY OR OTHER PROPRITARY RIGHTS.
+ */
+
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <syslog.h>
 
 #include "sockets.h"
 #include "mastercomm.h"
 #include "datapack.h"
 #include "MFSCommunication.h"
+#include "negentrycache.h"
+
 
 #define QUERYSIZE 10000
 #define ANSSIZE 10000
@@ -31,13 +49,8 @@ void* masterproxy_loop(void* args) {
 		ndesc = 0;
 		masterproxy_desc(pdesc,&ndesc);
 		i = poll(pdesc,ndesc,50);
-//		gettimeofday(&tv,NULL);
-//		usecnow = tv.tv_sec;
-//		usecnow *= 1000000;
-//		usecnow += tv.tv_usec;
-//		now = tv.tv_sec;
 		if (i<0) {
-			if (errno==EAGAIN) {
+			if (!ERRNO_ERROR) {
 				syslog(LOG_WARNING,"poll returned EAGAIN");
 				usleep(100000);
 			}
@@ -133,6 +146,10 @@ static void* masterproxy_server(void *args) {
 				return NULL;
 			}
 
+			if (cmd==CLTOMA_FUSE_SNAPSHOT && acmd==MATOCL_FUSE_SNAPSHOT) {
+				negentry_cache_clear();
+			}
+
 			wptr = ansbuffer;
 			put32bit(&wptr,acmd);
 			put32bit(&wptr,asize+4);
@@ -163,6 +180,7 @@ static void* masterproxy_acceptor(void *args) {
 			// memory is freed inside pthread routine !!!
 			*s = sock;
 			tcpnodelay(sock);
+			tcpnonblock(sock);
 			if (pthread_create(&clientthread,&thattr,masterproxy_server,s)<0) {
 				free(s);
 				tcpclose(sock);
@@ -179,27 +197,28 @@ void masterproxy_term(void) {
 	pthread_join(proxythread,NULL);
 }
 
-int masterproxy_init(void) {
+int masterproxy_init(const char *masterproxyip) {
 	pthread_attr_t thattr;
 
 	lsock = tcpsocket();
 	if (lsock<0) {
-		//mfs_errlog(LOG_ERR,"main master server module: can't create socket");
+		fprintf(stderr,"master proxy module: can't create socket\n");
 		return -1;
 	}
 	tcpnonblock(lsock);
 	tcpnodelay(lsock);
 	// tcpreuseaddr(lsock);
 	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
-		// mfs_errlog_silent(LOG_NOTICE,"master proxy: can't set accept filter");
+		syslog(LOG_NOTICE,"master proxy module: can't set accept filter");
 	}
-	if (tcpstrlisten(lsock,"127.0.0.1",0,100)<0) {
-		// mfs_errlog(LOG_ERR,"main master server module: can't listen on socket");
+	if (tcpstrlisten(lsock,masterproxyip,0,100)<0) {
+		fprintf(stderr,"master proxy module: can't listen on socket\n");
 		tcpclose(lsock);
 		lsock = -1;
 		return -1;
 	}
 	if (tcpgetmyaddr(lsock,&proxyhost,&proxyport)<0) {
+		fprintf(stderr,"master proxy module: can't obtain my address and port\n");
 		tcpclose(lsock);
 		lsock = -1;
 		return -1;

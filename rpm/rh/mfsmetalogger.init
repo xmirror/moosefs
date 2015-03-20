@@ -36,7 +36,7 @@ start () {
 
 stop () {
     echo -n $"Stopping $prog: "
-    $prog stop >/dev/null 2>&1 || killproc $prog >/dev/null 2>&1
+    $prog stop >/dev/null 2>&1 && success || killproc $prog >/dev/null 2>&1
     RETVAL=$?
     echo
     [ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/$prog
@@ -48,6 +48,14 @@ restart () {
     start
 }
 
+reload () {
+    echo -n $"Reloading $prog: "
+    $prog reload >/dev/null 2>&1 && success || failure
+    RETVAL=$?
+    echo
+    return $RETVAL
+}
+
 case "$1" in
   start)
     start
@@ -55,11 +63,15 @@ case "$1" in
   stop)
     stop
     ;;
-  restart|reload)
+  restart)
     restart
     ;;
-  condrestart)
+  condrestart|try-restart)
     [ -e /var/lock/subsys/$prog ] && restart
+    RETVAL=$?
+    ;;
+  reload|force-reload)
+    reload
     RETVAL=$?
     ;;
   status)
@@ -67,7 +79,7 @@ case "$1" in
     RETVAL=$?
     ;;
   *)
-    echo $"Usage: $0 {start|stop|restart|condrestart|status}"
+    echo $"Usage: $0 {start|stop|reload|force-reload|restart|try-restart|condrestart|status}"
     RETVAL=1
 esac
 
