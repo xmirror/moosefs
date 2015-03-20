@@ -62,6 +62,9 @@
 # port to listen on for chunkserver connections (default is @DEFAULT_MASTER_CS_PORT@)
 # MATOCS_LISTEN_PORT = @DEFAULT_MASTER_CS_PORT@
 
+# default timeout in seconds for master-chunkserver connection (default is 10)
+# MATOCS_TIMEOUT = 10
+
 ###############################################
 # CHUNKSERVER WORKING OPTIONS                 #
 ###############################################

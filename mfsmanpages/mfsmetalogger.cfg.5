@@ -1,4 +1,4 @@
-.TH mfsmetalogger.cfg "5" "January 2015" "MooseFS 2.0.48-1" "This is part of MooseFS"
+.TH mfsmetalogger.cfg "5" "February 2015" "MooseFS 2.0.50-1" "This is part of MooseFS"
 .SH NAME
 mfsmetalogger.cfg \- configuration file for \fBmfsmetalogger\fP
 .SH DESCRIPTION
@@ -44,6 +44,9 @@ number of previous metadata files to be kept (default is 3)
 .TP
 \fBMETA_DOWNLOAD_FREQ\fP
 metadata download frequency in hours (default is 24, at most \fBBACK_LOGS\fP/2)
+.TP
+\fBBIND_HOST\fP
+local address to use for master connections; default is *, i.e. default local address
 .TP
 \fBMASTER_HOST\fP
 address of MooseFS master host to connect with (default is mfsmaster)

@@ -17,7 +17,7 @@ RUN_DEPENDS+=	moosefs-ce-cgi>0:${PORTSDIR}/sysutils/moosefs-ce-cgi
 USE_RC_SUBR=	mfscgiserv
 PLIST_SUB+=	MFS_WORKDIR="${MFS_WORKDIR}"
 
-USE_PYTHON=	2.5+
+USES=           python:2.5+
 
 CONFIGURE_ARGS+=	--disable-generalmans \
 			--disable-mfsmaster \

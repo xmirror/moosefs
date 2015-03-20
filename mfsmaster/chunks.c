@@ -3044,7 +3044,7 @@ void chunk_reload(void) {
 	}
 */
 	if (cfg_isdefined("CHUNKS_LOOP_TIME")) {
-		LoopTimeMin = cfg_getuint32("CHUNKS_LOOP_TIME",300);
+		LoopTimeMin = cfg_getuint32("CHUNKS_LOOP_TIME",300); // deprecated option
 		if (LoopTimeMin < MINLOOPTIME) {
 			syslog(LOG_NOTICE,"CHUNKS_LOOP_TIME value too low (%"PRIu32") increased to %u",LoopTimeMin,MINLOOPTIME);
 			LoopTimeMin = MINLOOPTIME;
@@ -3081,7 +3081,7 @@ void chunk_reload(void) {
 	if (cfg_isdefined("ACCEPTABLE_PERCENTAGE_DIFFERENCE")) {
 		AcceptableDifference = cfg_getdouble("ACCEPTABLE_PERCENTAGE_DIFFERENCE",1.0)/100.0; // 1%
 	} else {
-		AcceptableDifference = cfg_getdouble("ACCEPTABLE_DIFFERENCE",0.01); // 1%
+		AcceptableDifference = cfg_getdouble("ACCEPTABLE_DIFFERENCE",0.01); // 1% - this is deprecated option
 	}
 	if (AcceptableDifference<0.001) { // 1%
 		AcceptableDifference = 0.001;
@@ -3149,7 +3149,7 @@ int chunk_strinit(void) {
 */
 	if (cfg_isdefined("CHUNKS_LOOP_TIME")) {
 		fprintf(stderr,"Defining loop time by CHUNKS_LOOP_TIME option is deprecated - use CHUNKS_LOOP_MAX_CPS and CHUNKS_LOOP_MIN_TIME\n");
-		LoopTimeMin = cfg_getuint32("CHUNKS_LOOP_TIME",300);
+		LoopTimeMin = cfg_getuint32("CHUNKS_LOOP_TIME",300); // deprecated option
 		if (LoopTimeMin < MINLOOPTIME) {
 			fprintf(stderr,"CHUNKS_LOOP_TIME value too low (%"PRIu32") increased to %u\n",LoopTimeMin,MINLOOPTIME);
 			LoopTimeMin = MINLOOPTIME;
@@ -3185,7 +3185,7 @@ int chunk_strinit(void) {
 	if (cfg_isdefined("ACCEPTABLE_PERCENTAGE_DIFFERENCE")) {
 		AcceptableDifference = cfg_getdouble("ACCEPTABLE_PERCENTAGE_DIFFERENCE",1.0)/100.0; // 1%
 	} else {
-		AcceptableDifference = cfg_getdouble("ACCEPTABLE_DIFFERENCE",0.01); // 1%
+		AcceptableDifference = cfg_getdouble("ACCEPTABLE_DIFFERENCE",0.01); // 1% - deprecated option
 	}
 	if (AcceptableDifference<0.001) { // 0.1%
 		AcceptableDifference = 0.001;

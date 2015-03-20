@@ -1,4 +1,4 @@
-.TH mfsmaster.cfg "5" "January 2015" "MooseFS 2.0.48-1" "This is part of MooseFS"
+.TH mfsmaster.cfg "5" "February 2015" "MooseFS 2.0.50-1" "This is part of MooseFS"
 .SH NAME
 mfsmaster.cfg \- main configuration file for \fBmfsmaster\fP
 .SH DESCRIPTION
@@ -40,8 +40,14 @@ alternate location/name of \fBmfsexports.cfg\fP file
 \fBTOPOLOGY_FILENAME\fP
 alternate location/name of \fBmfstopology.cfg\fP file
 .TP
+\fBLICENCE_FILENAME\fP
+alternate location/name of \fBmfslicence.bin\fP file (pro version only)
+.TP
 \fBBACK_LOGS\fP
 number of metadata change log files (default is 50)
+.TP
+\fBMETADATA_DOWNLOAD_FREQ\fP
+how often (in hours) leader will download metadata from followers (pro version only ; default is 24)
 .TP
 \fBBACK_META_KEEP_PREVIOUS\fP
 number of previous metadata files to be kept (default is 1)
@@ -58,19 +64,22 @@ IP address to listen on for metalogger, masters and supervisors connections (* m
 port to listen on for metalogger, masters and supervisors connections
 .TP
 \fBMASTER_RECONNECTION_DELAY\fP
-delay in seconds before next try to reconnect to master-leader if not connected (default is 5)
+delay in seconds before next try to reconnect to master-leader if not connected (pro version only ; default is 5)
 .TP
 \fBMASTER_TIMEOUT\fP
-timeout in seconds for master-leader connections (default is 10)
+timeout in seconds for master-leader connections (pro version only ; default is 10)
 .TP
 \fBBIND_HOST\fP
-local address to use for connecting with master-leader (default is *, i.e. default local address)
+local address to use for connecting with master-leader (pro version only ; default is *, i.e. default local address)
 .TP
 \fBMATOCS_LISTEN_HOST\fP
 IP address to listen on for chunkserver connections (\fB*\fP means any)
 .TP
 \fBMATOCS_LISTEN_PORT\fP
 port to listen on for chunkserver connections
+.TP
+\fBMATOCS_TIMEOUT\fP
+default timeout in seconds for master-chunkserver connection (default is 10)
 .TP
 \fBREPLICATIONS_DELAY_INIT\fP
 initial delay in seconds before starting replications (default is 300)

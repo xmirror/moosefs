@@ -175,6 +175,9 @@ int mainserv_connect(uint32_t fwdip,uint16_t fwdport,uint32_t timeout) {
 		tcpclose(fwdsock);
 		return -1;
 	}
+	if (tcpnodelay(fwdsock)<0) {
+		mfs_errlog(LOG_WARNING,"can't set TCP_NODELAY, error");
+	}
 	return fwdsock;
 }
 
@@ -1032,7 +1035,7 @@ uint8_t mainserv_write_last(int sock,uint64_t gchunkid,uint32_t gversion) {
 */
 			status = hdd_write(gchunkid,gversion,blocknum,rptr+4,offset,size,rptr);
 			if (status!=STATUS_OK) {
-				syslog(LOG_NOTICE,"hdd_write error: %u",status);
+//				syslog(LOG_NOTICE,"hdd_write error: %u",status);
 				rstat = 1;
 				break;
 			}

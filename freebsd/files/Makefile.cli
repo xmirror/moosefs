@@ -13,7 +13,7 @@ COMMENT=	Cli moosefs interface
 
 RUN_DEPENDS=	moosefs-common>0:${PORTSDIR}/sysutils/moosefs-common
 
-USE_PYTHON=	2.5+
+USES=           python:2.5+
 
 CONFIGURE_ARGS+=	--disable-generalmans \
 			--disable-mfsmaster \

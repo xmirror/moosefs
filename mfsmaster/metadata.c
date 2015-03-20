@@ -633,6 +633,8 @@ int meta_storeall(int bg) {
 			if (read(pfd[0],&c,1)!=1) {
 				syslog(LOG_WARNING,"metadata store, pipe read error");
 			}
+			close(pfd[0]);
+			close(pfd[1]);
 		} else {
 			storestarttime = monotonic_seconds();
 		}
@@ -717,6 +719,8 @@ int meta_storeall(int bg) {
 		if (write(pfd[1],"x",1)!=1) {
 			syslog(LOG_WARNING,"metadata store, pipe read error");
 		}
+		close(pfd[0]);
+		close(pfd[1]);
 	}
 	return 1;
 }

@@ -4985,8 +4985,8 @@ void matoclserv_reload(void) {
 		ListenHost = cfg_getstr("MATOCL_LISTEN_HOST","*");
 		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT);
 	} else {
-		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT);
+		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*"); // deprecated option
+		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT); // deprecated option
 	}
 	if (strcmp(oldListenHost,ListenHost)==0 && strcmp(oldListenPort,ListenPort)==0) {
 		free(oldListenHost);
@@ -5032,8 +5032,8 @@ int matoclserv_init(void) {
 		ListenPort = cfg_getstr("MATOCL_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT);
 	} else {
 		fprintf(stderr,"change MATOCU_LISTEN_* option names to MATOCL_LISTEN_* !!!\n");
-		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*");
-		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT);
+		ListenHost = cfg_getstr("MATOCU_LISTEN_HOST","*"); // deprecated option
+		ListenPort = cfg_getstr("MATOCU_LISTEN_PORT",DEFAULT_MASTER_CLIENT_PORT); // deprecated option
 	}
 
 	starting = 12;

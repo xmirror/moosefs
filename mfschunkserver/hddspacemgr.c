@@ -254,6 +254,7 @@ static uint32_t HDDRebalancePerc = 20;
 static uint32_t HDDErrorCount = 2;
 static uint32_t HDDErrorTime = 600;
 static uint64_t LeaveFree;
+static uint8_t DoFsyncBeforeClose = 0;
 
 /* folders data */
 static folder *folderhead = NULL;
@@ -2025,7 +2026,7 @@ void hdd_delayed_ops() {
 				ccp = &(cc->next);
 			} else {
 				double now;
-				if (c->fsyncneeded) {
+				if (c->fsyncneeded && DoFsyncBeforeClose) {
 					ts = monotonic_nseconds();
 #ifdef F_FULLFSYNC
 					if (fcntl(c->fd,F_FULLFSYNC)<0) {
@@ -2535,6 +2536,9 @@ int hdd_write(uint64_t chunkid,uint32_t version,uint16_t blocknum,const uint8_t 
 		put32bit(&wcrcptr,crc);
 		c->crcchanged = 1;
 		if (ret!=MFSBLOCKSIZE) {
+			if (error==0 || error==EAGAIN) {
+				error=ENOSPC;
+			}
 			errno = error;
 			hdd_error_occured(c);	// uses and preserves errno !!!
 			mfs_arg_errlog_silent(LOG_WARNING,"write_block_to_chunk: file:%s - write error",c->filename);
@@ -2685,6 +2689,9 @@ int hdd_write(uint64_t chunkid,uint32_t version,uint16_t blocknum,const uint8_t 
 			return ERROR_CRC;
 		}
 		if (ret!=(int)size) {
+			if (error==0 || error==EAGAIN) {
+				error=ENOSPC;
+			}
 			errno = error;
 			hdd_error_occured(c);	// uses and preserves errno !!!
 			mfs_arg_errlog_silent(LOG_WARNING,"write_block_to_chunk: file:%s - write error",c->filename);
@@ -5538,6 +5545,9 @@ void hdd_reload(void) {
 		HDDRebalancePerc=100;
 	}
 	zassert(pthread_mutex_unlock(&testlock));
+	zassert(pthread_mutex_lock(&doplock));
+	DoFsyncBeforeClose = cfg_getuint8("HDD_FSYNC_BEFORE_CLOSE",0);
+	zassert(pthread_mutex_unlock(&doplock));
 
 	LeaveFreeStr = cfg_getstr("HDD_LEAVE_SPACE_DEFAULT","256MiB");
 	if (hdd_size_parse(LeaveFreeStr,&LeaveFree)<0) {
