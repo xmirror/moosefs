@@ -22,6 +22,7 @@
 #include <inttypes.h>
 
 #include "MFSCommunication.h"
+#include "sharedpointer.h"
 #include "filesystem.h"
 #include "sessions.h"
 #include "openfiles.h"
@@ -1286,17 +1287,19 @@ int restore_net(uint64_t lv,const char *ptr) {
 }
 
 static uint64_t v=0,lastv=0;
-static const char *lastfn=NULL;
+static void *lastshfn = NULL;
 
-int restore_file(const char *filename,uint64_t lv,const char *ptr,uint8_t vlevel) {
+int restore_file(void *shfilename,uint64_t lv,const char *ptr,uint8_t vlevel) {
 	int status;
-	printf("1. lv,lastv,v,lastfn: %"PRIu64",%"PRIu64",%"PRIu64",%p\n",lv,lastv,v,lastfn);
-	if (lastv==0 || v==0) {
+	char *lastfn;
+	char *filename = (char*)shp_get(shfilename);
+	if (lastv==0 || v==0 || lastshfn==NULL) {
 		v = meta_version();
 		lastv = lv-1;
 		lastfn = "(no file)";
+	} else {
+		lastfn = (char*)shp_get(lastshfn);
 	}
-	printf("2. lv,lastv,v,lastfn: %"PRIu64",%"PRIu64",%"PRIu64",%p\n",lv,lastv,v,lastfn);
 	if (vlevel>1) {
 		mfs_arg_syslog(LOG_NOTICE,"filename: %s ; current meta version: %"PRIu64" ; previous changeid: %"PRIu64" ; current changeid: %"PRIu64" ; change data%s",filename,v,lastv,lv,ptr);
 	}
@@ -1331,6 +1334,12 @@ int restore_file(const char *filename,uint64_t lv,const char *ptr,uint8_t vlevel
 		}
 	}
 	lastv = lv;
-	lastfn = filename;
+	if (shfilename!=lastshfn) {
+		shp_inc(shfilename);
+		if (lastshfn!=NULL) {
+			shp_dec(lastshfn);
+		}
+		lastshfn = shfilename;
+	}
 	return 0;
 }

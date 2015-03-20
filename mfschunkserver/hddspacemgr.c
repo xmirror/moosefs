@@ -5497,6 +5497,7 @@ int hdd_folders_reinit(void) {
 				syslog(LOG_NOTICE,"hdd space manager: folder %s didn't change",f->path);
 			}
 		} else {
+			f->damaged = 0;
 			syslog(LOG_NOTICE,"hdd space manager: folder %s will be removed",f->path);
 		}
 	}

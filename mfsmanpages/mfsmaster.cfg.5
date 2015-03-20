@@ -1,4 +1,4 @@
-.TH mfsmaster.cfg "5" "February 2015" "MooseFS 2.0.51-1" "This is part of MooseFS"
+.TH mfsmaster.cfg "5" "March 2015" "MooseFS 2.0.53-1" "This is part of MooseFS"
 .SH NAME
 mfsmaster.cfg \- main configuration file for \fBmfsmaster\fP
 .SH DESCRIPTION
@@ -116,6 +116,9 @@ Maximum difference between space usage of chunkservers (deprecated, use \fBACCEP
 .TP
 \fBACCEPTABLE_PERCENTAGE_DIFFERENCE\fP
 Maximum percentage difference between space usage of chunkservers (default is 1 = 1%)
+.TP
+\fBPRIORITY_QUEUES_LENGTH\fP
+Length of priority queues (for endangered, undergoal etc. chunks - chunks that should be processed first - default is 1000000)
 .TP
 \fBMATOCL_LISTEN_HOST\fP
 IP address to listen on for client (mount) connections (\fB*\fP means any)

@@ -330,6 +330,7 @@ void matocsserv_log_extra_info(void) {
 	matocsserventry *eptr;
 	double dur;
 	uint8_t overloaded;
+	uint8_t maintained;
 	uint32_t now = main_time();
 	for (eptr = matocsservhead ; eptr ; eptr=eptr->next) {
 		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && eptr->csptr!=NULL) {
@@ -338,7 +339,8 @@ void matocsserv_log_extra_info(void) {
 				dur = 1.0;
 			}
 			overloaded = csdb_server_is_overloaded(eptr->csptr,now)?1:0;
-			syslog(LOG_NOTICE,"cs %s:%u ; usedspace: %"PRIu64" ; totalspace: %"PRIu64" ; usage: %.2lf%% ; load: %"PRIu32" ; timeout: %"PRIu16" ; chunkscount: %"PRIu32" ; errorcounter: %"PRIu32" ; rrepcounter: %"PRIu16" ; wrepcounter: %"PRIu16" ; delcounter: %"PRIu32" ; create_total: %"PRIu32" ; rrep_total: %"PRIu32" ; wrep_total: %"PRIu32" ; del_total: %"PRIu32" ; create/s: %.4lf ; rrep/s: %.4lf ; wrep/s: %.4lf ; del/s: %.4lf ; csid: %"PRIu16" ; cancreatechunks: %"PRIu8" ; dist: %"PRIu32" ; first: %"PRIu8" ; corr: %.4lf ; overloaded: %"PRIu8,eptr->servstrip,eptr->servport,eptr->usedspace,eptr->totalspace,100.0*(double)(eptr->usedspace)/(double)(eptr->totalspace),eptr->load,eptr->timeout,eptr->chunkscount,eptr->errorcounter,eptr->rrepcounter,eptr->wrepcounter,eptr->delcounter,eptr->create_total_counter,eptr->rrep_total_counter,eptr->wrep_total_counter,eptr->del_total_counter,eptr->create_total_counter/dur,eptr->rrep_total_counter/dur,eptr->wrep_total_counter/dur,eptr->del_total_counter/dur,eptr->csid,eptr->cancreatechunks,eptr->dist,eptr->first,eptr->corr,overloaded);
+			maintained = csdb_server_is_being_maintained(eptr->csptr)?1:0;
+			syslog(LOG_NOTICE,"cs %s:%u ; usedspace: %"PRIu64" ; totalspace: %"PRIu64" ; usage: %.2lf%% ; load: %"PRIu32" ; timeout: %"PRIu16" ; chunkscount: %"PRIu32" ; errorcounter: %"PRIu32" ; rrepcounter: %"PRIu16" ; wrepcounter: %"PRIu16" ; delcounter: %"PRIu32" ; create_total: %"PRIu32" ; rrep_total: %"PRIu32" ; wrep_total: %"PRIu32" ; del_total: %"PRIu32" ; create/s: %.4lf ; rrep/s: %.4lf ; wrep/s: %.4lf ; del/s: %.4lf ; csid: %"PRIu16" ; cancreatechunks: %"PRIu8" ; dist: %"PRIu32" ; first: %"PRIu8" ; corr: %.4lf ; overloaded: %"PRIu8" ; maintained: %"PRIu8,eptr->servstrip,eptr->servport,eptr->usedspace,eptr->totalspace,100.0*(double)(eptr->usedspace)/(double)(eptr->totalspace),eptr->load,eptr->timeout,eptr->chunkscount,eptr->errorcounter,eptr->rrepcounter,eptr->wrepcounter,eptr->delcounter,eptr->create_total_counter,eptr->rrep_total_counter,eptr->wrep_total_counter,eptr->del_total_counter,eptr->create_total_counter/dur,eptr->rrep_total_counter/dur,eptr->wrep_total_counter/dur,eptr->del_total_counter/dur,eptr->csid,eptr->cancreatechunks,eptr->dist,eptr->first,eptr->corr,overloaded,maintained);
 			eptr->create_total_counter = 0;
 			eptr->rrep_total_counter = 0;
 			eptr->wrep_total_counter = 0;
@@ -445,7 +447,7 @@ uint16_t matocsserv_getservers_ordered(uint16_t csids[MAXCSCOUNT],double maxusag
 	tspace = 0;
 	uspace = 0;
 	for (eptr = matocsservhead ; eptr && j<MAXCSCOUNT; eptr=eptr->next) {
-		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && eptr->csptr!=NULL && csdb_server_is_overloaded(eptr->csptr,now)==0) {
+		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && eptr->csptr!=NULL && csdb_server_is_overloaded(eptr->csptr,now)==0 && csdb_server_is_being_maintained(eptr->csptr)==0) {
 			uspace += eptr->usedspace;
 			tspace += eptr->totalspace;
 			space = (double)(eptr->usedspace) / (double)(eptr->totalspace);
@@ -715,7 +717,7 @@ uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double toleran
 		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>MFSCHUNKSIZE && eptr->csptr!=NULL) {
 			totalcnt++;
 			if (eptr->cancreatechunks) {
-				if (csdb_server_is_overloaded(eptr->csptr,now)) {
+				if (csdb_server_is_overloaded(eptr->csptr,now) || csdb_server_is_being_maintained(eptr->csptr)) {
 					gracecnt++;
 				} else {
 					servtab[allcnt] = eptr;
@@ -732,7 +734,7 @@ uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double toleran
 	if ((gracecnt*5) > (gracecnt+allcnt)) { // there are more than 20% CS in 'grace' state - add all of them to the list
 		for (eptr = matocsservhead ; eptr && allcnt<MAXCSCOUNT ; eptr=eptr->next) {
 			if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>MFSCHUNKSIZE && eptr->csptr!=NULL) {
-				if (eptr->cancreatechunks && csdb_server_is_overloaded(eptr->csptr,now)) {
+				if (eptr->cancreatechunks && (csdb_server_is_overloaded(eptr->csptr,now) || csdb_server_is_being_maintained(eptr->csptr))) {
 					servtab[allcnt] = eptr;
 					allcnt++;
 				}
@@ -846,7 +848,7 @@ uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double toleran
 		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>MFSCHUNKSIZE && eptr->csptr!=NULL) {
 			m = (double)(eptr->usedspace)/(double)(eptr->totalspace);
 			if (useonlymedian==0 || (m > median - tolerance && m < median + tolerance)) {
-				if (csdb_server_is_overloaded(eptr->csptr,now)) {
+				if (csdb_server_is_overloaded(eptr->csptr,now) || csdb_server_is_being_maintained(eptr->csptr)) {
 					gracecnt++;
 				} else {
 					servtab[allcnt].w = (double)eptr->totalspace/(double)maxtotalspace;
@@ -865,7 +867,7 @@ uint16_t matocsserv_getservers_wrandom(uint16_t csids[MAXCSCOUNT],double toleran
 			if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>MFSCHUNKSIZE && eptr->csptr!=NULL) {
 				m = (double)(eptr->usedspace)/(double)(eptr->totalspace);
 				if (useonlymedian==0 || (m > median - tolerance && m < median + tolerance)) {
-					if (csdb_server_is_overloaded(eptr->csptr,now)) {
+					if (csdb_server_is_overloaded(eptr->csptr,now) || csdb_server_is_being_maintained(eptr->csptr)) {
 						servtab[allcnt].w = (double)eptr->totalspace/(double)maxtotalspace;
 						servtab[allcnt].carry = eptr->carry;
 						servtab[allcnt].ptr = eptr;
@@ -914,7 +916,7 @@ uint16_t matocsserv_getservers_lessrepl(uint16_t csids[MAXCSCOUNT],double replim
 	j=0;
 	for (eptr = matocsservhead ; eptr && j<MAXCSCOUNT; eptr=eptr->next) {
 		a = ((uint32_t)(eptr->csid*UINT32_C(0x9874BF31)+now*UINT32_C(0xB489FC37)))/4294967296.0;
-		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>(eptr->totalspace/100) && eptr->wrepcounter+a<replimit && eptr->csptr!=NULL && csdb_server_is_overloaded(eptr->csptr,now)==0) {
+		if (eptr->mode!=KILL && eptr->totalspace>0 && eptr->usedspace<=eptr->totalspace && (eptr->totalspace - eptr->usedspace)>(eptr->totalspace/100) && eptr->wrepcounter+a<replimit && eptr->csptr!=NULL && csdb_server_is_overloaded(eptr->csptr,now)==0 && csdb_server_is_being_maintained(eptr->csptr)==0) {
 			csids[j] = eptr->csid;
 			j++;
 		}

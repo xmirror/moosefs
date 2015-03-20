@@ -1,5 +1,16 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.53-1 (2015-03-10)
+
+  - (master) fixed possible reference to freed memory during metadata recovery
+  - (master) added minimal priority queue length
+  - (cs) fixed removing damaged disks (lock file issue)
+  - (master) treat servers in maintenance mode as overloaded (no chunk creations, replications etc.)
+
+* MooseFS 2.0.52-1 (2015-03-04)
+
+  - (master) added option for setting length of chunks priority queues
+
 * MooseFS 2.0.51-1 (2015-02-26)
 
   - (master+cgi+cli) added quota-licences (pro version only)

@@ -201,7 +201,6 @@ static uint16_t csregisterinprogress = 0;
 static uint8_t csreceivingchunks = 0;
 
 #define DANGER_PRIORITIES 5
-#define DANGER_MAXLENG 32768
 
 static chunk** chunks_priority_queue[DANGER_PRIORITIES];
 static uint32_t chunks_priority_leng[DANGER_PRIORITIES];
@@ -212,6 +211,7 @@ static uint32_t chunks_priority_tail[DANGER_PRIORITIES];
 static uint32_t ReplicationsDelayInit=60;
 static uint32_t AcceptUnknownChunkDelay=300;
 static uint32_t RemoveDelayDisconnect=3600;
+static uint32_t DangerMaxLeng=1000000;
 
 static double MaxWriteRepl[4];
 static double MaxReadRepl[4];
@@ -602,16 +602,16 @@ static inline void chunk_priority_enqueue(uint8_t j,chunk *c) {
 	}
 	l = chunks_priority_leng[j];
 	h = chunks_priority_head[j];
-	if (l>=DANGER_MAXLENG) {
+	if (l>=DangerMaxLeng) {
 		if (chunks_priority_queue[j][h]!=NULL) {
 			chunks_priority_queue[j][h]->ondangerlist=0;
 		}
 	}
 	chunks_priority_queue[j][h] = c;
 	c->ondangerlist = 1;
-	h = (h+1)%DANGER_MAXLENG;
+	h = (h+1)%DangerMaxLeng;
 	chunks_priority_head[j] = h;
-	if (l<DANGER_MAXLENG) {
+	if (l<DangerMaxLeng) {
 		chunks_priority_leng[j] = l+1;
 	} else {
 		chunks_priority_tail[j] = h;
@@ -2605,7 +2605,7 @@ void chunk_do_jobs(chunk *c,uint16_t scount,uint16_t fullservers,double minusage
 static inline void chunk_clean_priority_queues(void) {
 	uint32_t j,l;
 	for (j=0 ; j<DANGER_PRIORITIES ; j++) {
-		for (l=0 ; l<DANGER_MAXLENG ; l++) {
+		for (l=0 ; l<DangerMaxLeng ; l++) {
 			if (chunks_priority_queue[j][l]!=NULL) {
 				chunks_priority_queue[j][l]->ondangerlist = 0;
 			}
@@ -2652,9 +2652,9 @@ void chunk_jobs_main(void) {
 	// first serve some endangered and undergoal chunks
 	lc = 0;
 	for (j=0 ; j<DANGER_PRIORITIES ; j++) {
-		if (((chunks_priority_tail[j]+chunks_priority_leng[j])%DANGER_MAXLENG) != chunks_priority_head[j]) {
+		if (((chunks_priority_tail[j]+chunks_priority_leng[j])%DangerMaxLeng) != chunks_priority_head[j]) {
 			syslog(LOG_NOTICE,"danger_priority_group %"PRIu32": serious structure error, head: %"PRIu32"; tail: %"PRIu32"; leng: %"PRIu32,j,chunks_priority_head[j],chunks_priority_tail[j],+chunks_priority_leng[j]);
-			for (l=0 ; l<DANGER_MAXLENG ; l++) {
+			for (l=0 ; l<DangerMaxLeng ; l++) {
 				if (chunks_priority_queue[j][l]!=NULL) {
 					chunks_priority_queue[j][l]->ondangerlist = 0;
 				}
@@ -2673,7 +2673,7 @@ void chunk_jobs_main(void) {
 			do {
 				c = chunks_priority_queue[j][t];
 				chunks_priority_queue[j][t] = NULL;
-				t = (t+1)%DANGER_MAXLENG;
+				t = (t+1)%DangerMaxLeng;
 				chunks_priority_tail[j] = t;
 				chunks_priority_leng[j]--;
 				if (c!=NULL) {
@@ -2974,8 +2974,8 @@ int chunk_parse_rep_list(char *strlist,double *replist) {
 }
 
 void chunk_reload(void) {
-	uint32_t oldMaxDelSoftLimit,oldMaxDelHardLimit;
-	uint32_t cps;
+	uint32_t oldMaxDelSoftLimit,oldMaxDelHardLimit,oldDangerMaxLeng;
+	uint32_t cps,i,j;
 	char *repstr;
 
 	ReplicationsDelayInit = cfg_getuint32("REPLICATIONS_DELAY_INIT",60);
@@ -3089,6 +3089,32 @@ void chunk_reload(void) {
 	if (AcceptableDifference>0.1) { // 10%
 		AcceptableDifference = 0.1;
 	}
+
+	oldDangerMaxLeng = DangerMaxLeng;
+	DangerMaxLeng = cfg_getuint32("PRIORITY_QUEUES_LENGTH",1000000);
+	if (DangerMaxLeng<10000) {
+		DangerMaxLeng = 10000;
+	}
+	if (DangerMaxLeng != oldDangerMaxLeng) {
+		for (j=0 ; j<DANGER_PRIORITIES ; j++) {
+			if (chunks_priority_leng[j]>0) {
+				for (i=chunks_priority_tail[j] ; i!=chunks_priority_head[j] ; i = (i+1)%oldDangerMaxLeng) {
+					if (chunks_priority_queue[j][i]!=NULL) {
+						chunks_priority_queue[j][i]->ondangerlist=0;
+					}
+				}
+			}
+			free(chunks_priority_queue[j]);
+			chunks_priority_queue[j] = (chunk**)malloc(sizeof(chunk*)*DangerMaxLeng);
+			passert(chunks_priority_queue[j]);
+			for (i=0 ; i<DangerMaxLeng ; i++) {
+				chunks_priority_queue[j][i] = NULL;
+			}
+			chunks_priority_leng[j] = 0;
+			chunks_priority_head[j] = 0;
+			chunks_priority_tail[j] = 0;
+		}
+	}
 }
 
 int chunk_strinit(void) {
@@ -3193,6 +3219,10 @@ int chunk_strinit(void) {
 	if (AcceptableDifference>0.1) { // 10%
 		AcceptableDifference = 0.1;
 	}
+	DangerMaxLeng = cfg_getuint32("PRIORITY_QUEUES_LENGTH",1000000);
+	if (DangerMaxLeng<10000) {
+		DangerMaxLeng = 10000;
+	}
 	chunk_hash_init();
 //	for (i=0 ; i<HASHSIZE ; i++) {
 //		chunkhash[i]=NULL;
@@ -3218,9 +3248,9 @@ int chunk_strinit(void) {
 	}
 	jobshpos = 0;
 	for (j=0 ; j<DANGER_PRIORITIES ; j++) {
-		chunks_priority_queue[j] = (chunk**)malloc(sizeof(chunk*)*DANGER_MAXLENG);
+		chunks_priority_queue[j] = (chunk**)malloc(sizeof(chunk*)*DangerMaxLeng);
 		passert(chunks_priority_queue[j]);
-		for (i=0 ; i<DANGER_MAXLENG ; i++) {
+		for (i=0 ; i<DangerMaxLeng ; i++) {
 			chunks_priority_queue[j][i] = NULL;
 		}
 		chunks_priority_leng[j] = 0;

@@ -112,6 +112,9 @@
 # Deprecates: ACCEPTABLE_DIFFERENCE (ACCEPTABLE_PERCENTAGE_DIFFERENCE = ACCEPTABLE_DIFFERENCE * 100.0)
 # ACCEPTABLE_PERCENTAGE_DIFFERENCE = 1.0
 
+# Length of priority queues (for endangered, undergoal etc. chunks - chunks that should be processed first - default value is 1000000).
+# PRIORITY_QUEUES_LENGTH = 1000000
+
 ###############################################
 # CLIENTS CONNECTION OPTIONS                  #
 ###############################################

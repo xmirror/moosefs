@@ -18,6 +18,7 @@
 #include <inttypes.h>
 
 #include "slogger.h"
+#include "sharedpointer.h"
 #include "restore.h"
 #include "clocks.h"
 
@@ -25,7 +26,7 @@
 
 typedef struct _hentry {
 	FILE *fd;
-	char *filename;
+	void *shfilename;
 	char *buff;
 	char *ptr;
 	int64_t nextid;
@@ -89,7 +90,7 @@ void merger_nextentry(uint32_t pos) {
 		if (heap[pos].nextid<0 || (nextid>heap[pos].nextid && nextid<heap[pos].nextid+maxidhole)) {
 			heap[pos].nextid = nextid;
 		} else {
-			mfs_arg_syslog(LOG_WARNING,"found garbage at the end of file: %s (last correct id: %"PRIu64")\n",heap[pos].filename,heap[pos].nextid);
+			mfs_arg_syslog(LOG_WARNING,"found garbage at the end of file: %s (last correct id: %"PRIu64")\n",(char*)shp_get(heap[pos].shfilename),heap[pos].nextid);
 			heap[pos].nextid = INT64_C(-1);
 		}
 	} else {
@@ -101,8 +102,8 @@ void merger_delete_entry(void) {
 	if (heap[heapsize].fd) {
 		fclose(heap[heapsize].fd);
 	}
-	if (heap[heapsize].filename) {
-		free(heap[heapsize].filename);
+	if (heap[heapsize].shfilename!=NULL) {
+		shp_dec(heap[heapsize].shfilename);
 	}
 	if (heap[heapsize].buff) {
 		free(heap[heapsize].buff);
@@ -112,14 +113,14 @@ void merger_delete_entry(void) {
 void merger_new_entry(const char *filename) {
 	// printf("add file: %s\n",filename);
 	if ((heap[heapsize].fd = fopen(filename,"r"))!=NULL) {
-		heap[heapsize].filename = strdup(filename);
+		heap[heapsize].shfilename = shp_new(strdup(filename),free);
 		heap[heapsize].buff = malloc(BSIZE);
 		heap[heapsize].ptr = NULL;
 		heap[heapsize].nextid = INT64_C(-1);
 		merger_nextentry(heapsize);
 	} else {
 		mfs_arg_syslog(LOG_WARNING,"can't open changelog file: %s\n",filename);
-		heap[heapsize].filename = NULL;
+		heap[heapsize].shfilename = NULL;
 		heap[heapsize].buff = NULL;
 		heap[heapsize].ptr = NULL;
 		heap[heapsize].nextid = INT64_C(-1);
@@ -189,7 +190,7 @@ int merger_loop(uint8_t verblevel) {
 			fflush(stdout);
 		}
 //		printf("current id: %"PRIu64" / %s\n",heap[0].nextid,heap[0].ptr);
-		if ((status=restore_file(heap[0].filename,heap[0].nextid,heap[0].ptr,verblevel))<0) {
+		if ((status=restore_file(heap[0].shfilename,heap[0].nextid,heap[0].ptr,verblevel))<0) {
 			while (heapsize) {
 				heapsize--;
 				merger_delete_entry();

@@ -238,6 +238,11 @@ uint8_t csdb_server_is_overloaded(void *v_csptr,uint32_t now) {
 	return (csptr->heavyloadts+HeavyLoadGracePeriod<=now)?0:1;
 }
 
+uint8_t csdb_server_is_being_maintained(void *v_csptr) {
+	csdbentry *csptr = (csdbentry*)v_csptr;
+	return csptr->maintenance;
+}
+
 uint32_t csdb_servlist_size(void) {
 	uint32_t hash;
 	csdbentry *csptr;

@@ -12,12 +12,12 @@
    PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
-#ifndef _RESTORE_H_
-#define _RESTORE_H_
+#ifndef _SHAREDPOINTER_H_
+#define _SHAREDPOINTER_H_
 
-#include <inttypes.h>
-
-int restore_net(uint64_t lv,const char *ptr);
-int restore_file(void *shfilename,uint64_t lv,const char *ptr,uint8_t verblevel);
+void* shp_new(void *pointer,void (*freefn)(void*));
+void* shp_get(void *vs);
+void shp_inc(void *vs);
+void shp_dec(void *vs);
 
 #endif

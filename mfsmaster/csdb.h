@@ -23,6 +23,7 @@ uint16_t csdb_get_csid(void *v_csptr);
 void csdb_lost_connection(void *v_csptr);
 void csdb_server_load(void *v_csptr,uint32_t load);
 uint8_t csdb_server_is_overloaded(void *v_csptr,uint32_t now);
+uint8_t csdb_server_is_being_maintained(void *v_csptr);
 uint32_t csdb_servlist_size(void);
 void csdb_servlist_data(uint8_t *ptr);
 uint8_t csdb_remove_server(uint32_t ip,uint16_t port);

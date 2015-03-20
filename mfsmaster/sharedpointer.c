@@ -12,12 +12,41 @@
    PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
-#ifndef _RESTORE_H_
-#define _RESTORE_H_
-
+#include <stdlib.h>
 #include <inttypes.h>
 
-int restore_net(uint64_t lv,const char *ptr);
-int restore_file(void *shfilename,uint64_t lv,const char *ptr,uint8_t verblevel);
+typedef struct _shp {
+	void *pointer;
+	void (*freefn)(void*);
+	uint32_t refcnt;
+} shp;
 
-#endif
+void* shp_new(void *pointer,void (*freefn)(void*)) {
+	shp *s;
+	s = malloc(sizeof(shp));
+	s->pointer = pointer;
+	s->freefn = freefn;
+	s->refcnt = 1;
+	return s;
+}
+
+void* shp_get(void *vs) {
+	shp *s = (shp*)vs;
+	return s->pointer;
+}
+
+void shp_inc(void *vs) {
+	shp *s = (shp*)vs;
+	s->refcnt++;
+}
+
+void shp_dec(void *vs) {
+	shp *s = (shp*)vs;
+	if (s->refcnt>0) {
+		s->refcnt--;
+	}
+	if (s->refcnt==0) {
+		s->freefn(s->pointer);
+		free(s);
+	}
+}
