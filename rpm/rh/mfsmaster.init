@@ -28,7 +28,7 @@ prog="mfsmaster"
 
 start () {
     echo -n $"Starting $prog: "
-    daemon $prog >/dev/null 2>&1
+    $prog start >/dev/null 2>&1 && success || failure
     RETVAL=$?
     echo
     [ $RETVAL -eq 0 ] && touch /var/lock/subsys/$prog
@@ -37,7 +37,7 @@ start () {
 
 stop () {
     echo -n $"Stopping $prog: "
-    $prog stop >/dev/null 2>&1 && success || killproc $prog >/dev/null 2>&1
+    $prog stop >/dev/null 2>&1 && success || failure
     RETVAL=$?
     echo
     [ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/$prog

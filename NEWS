@@ -1,5 +1,11 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 2.0.43-1 (2014-10-31)
+
+  - (master) introducing new licence model (new licences with size limit for pro version)
+  - (all) fixed portability issues with usleep (thanks to Tom Ivar Helbekkmo)
+  - (all) setting socket options after listen (thanks to Tom Ivar Helbekkmo)
+
 * MooseFS 2.0.42-1 (2014-10-29)
 
   - (tools) fixed printing ip numbers in mfsfileinfo

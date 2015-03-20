@@ -20,7 +20,7 @@
 
 Summary:	MooseFS - distributed, fault tolerant file system
 Name:		moosefs-ce
-Version:	2.0.42
+Version:	2.0.43
 Release:	1%{?_relname}
 License:	commercial
 Group:		System Environment/Daemons
@@ -253,7 +253,7 @@ exit 0
 
 %files master
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_sbindir}/mfsmaster
 %attr(755,root,root) %{_sbindir}/mfsmetadump
 %attr(755,root,root) %{_sbindir}/mfsmetarestore
@@ -281,7 +281,7 @@ exit 0
 
 %files metalogger
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_sbindir}/mfsmetalogger
 %{_mandir}/man5/mfsmetalogger.cfg.5*
 %{_mandir}/man8/mfsmetalogger.8*
@@ -299,7 +299,7 @@ exit 0
 
 %files chunkserver
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_sbindir}/mfschunkserver
 %attr(755,root,root) %{_sbindir}/mfschunktool
 %{_mandir}/man5/mfschunkserver.cfg.5*
@@ -320,7 +320,7 @@ exit 0
 
 %files client
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_bindir}/mfsappendchunks
 %attr(755,root,root) %{_bindir}/mfscheckfile
 %attr(755,root,root) %{_bindir}/mfsdirinfo
@@ -377,7 +377,7 @@ exit 0
 
 %files cli
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_bindir}/mfscli
 
 
@@ -385,7 +385,7 @@ exit 0
 
 %files cgi
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %dir %{_datadir}/mfscgi
 %attr(755,root,root) %{_datadir}/mfscgi/*.cgi
 %{_datadir}/mfscgi/*.css
@@ -400,7 +400,7 @@ exit 0
 
 %files cgiserv
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_sbindir}/mfscgiserv
 %{_mandir}/man8/mfscgiserv.8*
 %dir %{_localstatedir}/mfs
@@ -416,7 +416,7 @@ exit 0
 
 %files netdump
 %defattr(644,root,root,755)
-%doc NEWS README UPGRADE
+%doc NEWS README
 %attr(755,root,root) %{_sbindir}/mfsnetdump
 %{_mandir}/man8/mfsnetdump.8*
 

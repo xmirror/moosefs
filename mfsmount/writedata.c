@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -44,6 +44,7 @@
 #include "csdb.h"
 #include "mastercomm.h"
 #include "clocks.h"
+#include "portable.h"
 #include "readdata.h"
 #include "MFSCommunication.h"
 
@@ -166,7 +167,7 @@ void* write_info_worker(void *arg) {
 		}
 		syslog(LOG_NOTICE,"used cache blocks: %"PRIu32" ; sum of inode used blocks: %"PRIu32" ; free cache blocks: %"PRIu32" ; free cache chain blocks: %"PRIu32,usedblocks,cbcnt,freecacheblocks,fcbcnt);
 		zassert(pthread_mutex_unlock(&glock));
-		usleep(500000);
+		portable_usleep(500000);
 	}
 
 }
@@ -329,7 +330,7 @@ void* write_dqueue_worker(void *arg) {
 			}
 			if (cnt>0) {
 				if (t<1000000) {
-					usleep(1000000-t);
+					portable_usleep(1000000-t);
 				}
 				cnt--;
 			}
@@ -1148,7 +1149,7 @@ void* write_worker(void *arg) {
 				write_job_end(id,EDQUOT,0);
 				continue;
 			} else if (westatus!=STATUS_OK) {
-				usleep(100000+(10000<<cnt));
+				portable_usleep(100000+(10000<<cnt));
 			} else {
 				break;
 			}

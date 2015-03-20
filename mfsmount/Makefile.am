@@ -34,7 +34,7 @@ mfsmount_SOURCES=\
 	../mfscommon/conncache.c ../mfscommon/conncache.h \
 	../mfscommon/strerr.c ../mfscommon/strerr.h \
 	../mfscommon/datapack.h ../mfscommon/massert.h \
-	../mfscommon/mfsstrerr.h \
+	../mfscommon/mfsstrerr.h ../mfscommon/portable.h \
 	../mfscommon/MFSCommunication.h
 
 mfstools_SOURCES=\

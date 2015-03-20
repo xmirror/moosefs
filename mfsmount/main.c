@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -54,6 +54,7 @@
 #include "MFSCommunication.h"
 #include "clocks.h"
 #include "massert.h"
+#include "portable.h"
 #include "md5.h"
 #include "mastercomm.h"
 #include "masterproxy.h"
@@ -775,7 +776,7 @@ int mainloop(struct fuse_args *args,const char* mp,int mt,int fg) {
 	if (se==NULL) {
 		fuse_unmount(mp,ch);
 		fprintf(stderr,"error in fuse_lowlevel_new\n");
-		usleep(100000);	// time for print other error messages by FUSE
+		portable_usleep(100000);	// time for print other error messages by FUSE
 		if (piped[1]>=0) {
 			if (write(piped[1],&s,1)!=1) {
 				fprintf(stderr,"pipe write error\n");

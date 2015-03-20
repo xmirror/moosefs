@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -5003,9 +5003,6 @@ void matoclserv_reload(void) {
 	tcpnonblock(newlsock);
 	tcpnodelay(newlsock);
 	tcpreuseaddr(newlsock);
-	if (tcpsetacceptfilter(newlsock)<0 && errno!=ENOTSUP) {
-		mfs_errlog_silent(LOG_NOTICE,"main master server module: can't set accept filter");
-	}
 	if (tcpstrlisten(newlsock,ListenHost,ListenPort,100)<0) {
 		mfs_arg_errlog(LOG_ERR,"main master server module: socket address has changed, but can't listen on socket (%s:%s)",ListenHost,ListenPort);
 		free(ListenHost);
@@ -5014,6 +5011,9 @@ void matoclserv_reload(void) {
 		ListenPort = oldListenPort;
 		tcpclose(newlsock);
 		return;
+	}
+	if (tcpsetacceptfilter(newlsock)<0 && errno!=ENOTSUP) {
+		mfs_errlog_silent(LOG_NOTICE,"main master server module: can't set accept filter");
 	}
 	mfs_arg_syslog(LOG_NOTICE,"main master server module: socket address has changed, now listen on %s:%s",ListenHost,ListenPort);
 	free(oldListenHost);
@@ -5041,12 +5041,12 @@ int matoclserv_init(void) {
 	tcpnonblock(lsock);
 	tcpnodelay(lsock);
 	tcpreuseaddr(lsock);
-	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
-		mfs_errlog_silent(LOG_NOTICE,"main master server module: can't set accept filter");
-	}
 	if (tcpstrlisten(lsock,ListenHost,ListenPort,100)<0) {
 		mfs_arg_errlog(LOG_ERR,"main master server module: can't listen on %s:%s",ListenHost,ListenPort);
 		return -1;
+	}
+	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
+		mfs_errlog_silent(LOG_NOTICE,"main master server module: can't set accept filter");
 	}
 	mfs_arg_syslog(LOG_NOTICE,"main master server module: listen on %s:%s",ListenHost,ListenPort);
 

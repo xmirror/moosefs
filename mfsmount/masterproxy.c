@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #include <string.h>
@@ -26,7 +26,6 @@
 #include "MFSCommunication.h"
 #include "negentrycache.h"
 
-
 #define QUERYSIZE 10000
 #define ANSSIZE 10000
 
@@ -37,35 +36,6 @@ static uint8_t terminate;
 static uint32_t proxyhost;
 static uint16_t proxyport;
 
-
-/*
-void* masterproxy_loop(void* args) {
-	struct pollfd pdesc[MAXFILES];
-	uint32_t ndesc;
-
-	(void)args;
-
-	while (terminate==0) {
-		ndesc = 0;
-		masterproxy_desc(pdesc,&ndesc);
-		i = poll(pdesc,ndesc,50);
-		if (i<0) {
-			if (!ERRNO_ERROR) {
-				syslog(LOG_WARNING,"poll returned EAGAIN");
-				usleep(100000);
-			}
-			if (errno!=EINTR) {
-				syslog(LOG_WARNING,"poll error: %s",strerr(errno));
-				usleep(100000);
-			}
-			continue;
-		} else {
-			masterproxy_serve(pdesc);
-		}
-	}
-	return NULL;
-}
-*/
 
 void masterproxy_getlocation(uint8_t *masterinfo) {
 	const uint8_t *rptr = masterinfo+10;
@@ -208,14 +178,14 @@ int masterproxy_init(const char *masterproxyip) {
 	tcpnonblock(lsock);
 	tcpnodelay(lsock);
 	// tcpreuseaddr(lsock);
-	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
-		syslog(LOG_NOTICE,"master proxy module: can't set accept filter");
-	}
 	if (tcpstrlisten(lsock,masterproxyip,0,100)<0) {
 		fprintf(stderr,"master proxy module: can't listen on socket\n");
 		tcpclose(lsock);
 		lsock = -1;
 		return -1;
+	}
+	if (tcpsetacceptfilter(lsock)<0 && errno!=ENOTSUP) {
+		syslog(LOG_NOTICE,"master proxy module: can't set accept filter");
 	}
 	if (tcpgetmyaddr(lsock,&proxyhost,&proxyport)<0) {
 		fprintf(stderr,"master proxy module: can't obtain my address and port\n");

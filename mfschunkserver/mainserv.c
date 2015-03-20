@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -36,6 +36,7 @@
 #include "hddspacemgr.h"
 #include "main.h"
 #include "clocks.h"
+#include "portable.h"
 #include "mainserv.h"
 #ifdef USE_CONNCACHE
 #include "conncache.h"
@@ -248,7 +249,7 @@ void* mainserv_read_nop_sender(void* arg) {
 			sleep_utime = READ_NOPS_INTERVAL - (monotonic_utime - read_nops_head->monotonic_utime);
 		}
 		zassert(pthread_mutex_unlock(&read_nops_lock));
-		usleep(sleep_utime);
+		portable_usleep(sleep_utime);
 	} while (1);
 	return arg;
 }

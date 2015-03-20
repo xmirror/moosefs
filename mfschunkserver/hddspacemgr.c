@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -51,6 +51,7 @@
 #include "massert.h"
 #include "random.h"
 #include "clocks.h"
+#include "portable.h"
 #include "sockets.h"
 
 #define PRESERVE_BLOCK 1
@@ -2668,7 +2669,7 @@ int hdd_write(uint64_t chunkid,uint32_t version,uint16_t blocknum,const uint8_t 
 //#warning TEST
 //	if ((random()&0x1F)==0) {
 //		syslog(LOG_NOTICE,"BAM BAM BAM");
-//		usleep(500000);
+//		portable_usleep(500000);
 //	}
 	hdd_chunk_release(c);
 	return STATUS_OK;
@@ -4319,7 +4320,7 @@ void* hdd_rebalance_thread(void *arg) {
 				en /= perc;
 				en -= st;
 				if (en>0) {
-					usleep(en);
+					portable_usleep(en);
 				}
 			}
 		} else {
@@ -4415,7 +4416,7 @@ void* hdd_tester_thread(void* arg) {
 		if (en>st) {
 			en-=st;
 			if (en<1000000) {
-				usleep(1000000-en);
+				portable_usleep(1000000-en);
 			}
 		}
 	}
@@ -4747,7 +4748,7 @@ void* hdd_folder_scan(void *arg) {
 		if (dd) {
 			while (readdir_r(dd,destorage,&de)==0 && de!=NULL && scanterm==0) {
 //#warning debug
-//				usleep(100000);
+//				portable_usleep(100000);
 //
 				if (hdd_check_filename(de->d_name,&namechunkid,&nameversion)<0) {
 					continue;
@@ -4761,7 +4762,7 @@ void* hdd_folder_scan(void *arg) {
 						scanterm = 1;
 					}
 					zassert(pthread_mutex_unlock(&folderlock));
-					// usleep(100000); - slow down scanning (also change 1000 in 'if' to something much smaller) - for tests
+					// portable_usleep(100000); - slow down scanning (also change 1000 in 'if' to something much smaller) - for tests
 					tcheckcnt = 0;
 				}
 			}
@@ -4884,7 +4885,7 @@ void hdd_term(void) {
 	zassert(pthread_mutex_unlock(&folderlock));
 //	syslog(LOG_NOTICE,"waiting for scanning threads (%"PRIu32")",i);
 	while (i>0) {
-		usleep(10000); // not very elegant solution.
+		portable_usleep(10000); // not very elegant solution.
 		zassert(pthread_mutex_lock(&folderlock));
 		for (f=folderhead ; f ; f=f->next) {
 			if (f->scanstate==SCST_SCANFINISHED) {

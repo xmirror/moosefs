@@ -26,6 +26,7 @@ mfschunkserver_SOURCES= \
 	../mfscommon/strerr.c ../mfscommon/strerr.h \
 	../mfscommon/datapack.h ../mfscommon/massert.h \
 	../mfscommon/slogger.h ../mfscommon/mfsstrerr.h \
+	../mfscommon/portable.h \
 	../mfscommon/MFSCommunication.h
 
 

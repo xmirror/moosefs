@@ -12,17 +12,21 @@
    PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
-#ifndef _CSSERV_H_
-#define _CSSERV_H_
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
+#ifndef _PORTABLE_H_
+#define _PORTABLE_H_
+
+#include <sys/select.h>
 #include <inttypes.h>
 
-void csserv_stats(uint64_t *bin,uint64_t *bout);
-// void csserv_cstocs_connected(void *e,void *cptr);
-// void csserv_cstocs_gotstatus(void *e,uint64_t chunkid,uint32_t writeid,uint8_t s);
-// void csserv_cstocs_disconnected(void *e);
-uint32_t csserv_getlistenip();
-uint16_t csserv_getlistenport();
-int csserv_init(void);
+static inline void portable_usleep(uint64_t usec) {
+	struct timeval tv;
+	tv.tv_sec = usec/1000000;
+	tv.tv_usec = usec%1000000;
+	select(0, NULL, NULL, NULL, &tv);
+}
 
 #endif

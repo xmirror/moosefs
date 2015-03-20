@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
 */
 
 #ifdef HAVE_CONFIG_H
@@ -44,6 +44,7 @@
 #include "csdb.h"
 #include "mastercomm.h"
 #include "clocks.h"
+#include "portable.h"
 #include "readdata.h"
 #include "MFSCommunication.h"
 
@@ -215,7 +216,7 @@ void* read_dqueue_worker(void *arg) {
 			}
 			if (cnt>0) {
 				if (t<1000000) {
-					usleep(1000000-t);
+					portable_usleep(1000000-t);
 				}
 				cnt--;
 			}

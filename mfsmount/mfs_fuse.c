@@ -7,9 +7,9 @@
    ACTIVATING OR USING THE SOFTWARE, YOU ARE AGREEING TO BE BOUND BY
    THE TERMS AND CONDITIONS OF MooseFS LICENSE AGREEMENT FOR
    VERSION 1.7 AND HIGHER IN A SEPARATE FILE. THIS SOFTWARE IS LICENSED AS
-   THE PROPRIETARY SOFTWARE, NOT AS OPEN SOURCE ONE. YOU NOT ACQUIRE
+   THE PROPRIETARY SOFTWARE. YOU NOT ACQUIRE
    ANY OWNERSHIP RIGHT, TITLE OR INTEREST IN OR TO ANY INTELLECTUAL
-   PROPERTY OR OTHER PROPRITARY RIGHTS.
+   PROPERTY OR OTHER PROPRIETARY RIGHTS.
  */
 
 #if defined(__APPLE__)
@@ -3551,84 +3551,6 @@ void mfs_removexattr (fuse_req_t req, fuse_ino_t ino, const char *name) {
 		fuse_reply_err(req,0);
 	}
 }
-
-#if FUSE_USE_VERSION >= 26
-/*
-void mfs_getlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi, struct flock *lock) {
-	struct fuse_ctx ctx;
-
-	ctx = *(fuse_req_ctx(req));
-	oplog_printf(&ctx,"getlk (inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u)\n",(unsigned long int)ino,(unsigned long long int)fi->lock_owner,(unsigned long long int)lock->l_start,(unsigned long long int)lock->l_len,(unsigned int)lock->l_whence,(unsigned int)lock->l_type);
-	if (debug_mode) {
-		fprintf(stderr,"getlk (inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u)\n",(unsigned long int)ino,(unsigned long long int)fi->lock_owner,(unsigned long long int)lock->l_start,(unsigned long long int)lock->l_len,(unsigned int)lock->l_whence,(unsigned int)lock->l_type);
-	}
-	if (IS_SPECIAL_INODE(ino)) {
-		fuse_reply_err(req,EPERM);
-		return;
-	}
-//	syslog(LOG_NOTICE,"get lock inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u",(unsigned long int)ino,fi->lock_owner,lock->l_start,lock->l_len,lock->l_whence,lock->l_type);
-	lock->l_type = F_UNLCK;
-	fuse_reply_lock(req,lock);
-}
-
-typedef struct _setlk_interrupt {
-	fuse_ino_t inode;
-	uint64_t ownerid;
-	uint64_t start;
-	uint64_t len;
-	uint8_t whence;
-	uint8_t type;
-	uint8_t fired;
-} setlk_interrupt;
-
-void mfs_setlk_interrupt(fuse_req_t req,void *data) {
-	struct fuse_ctx ctx;
-	setlk_interrupt *d = (setlk_interrupt*)data;
-
-	ctx = *(fuse_req_ctx(req));
-	oplog_printf(&ctx,"setlk interrupt (inode:%lu owner:%"PRIu64" lstart:%"PRIu64" llen:%"PRIu64" lwhence:%"PRIu8" ltype:%"PRIu8")\n",(unsigned long int)d->inode,d->ownerid,d->start,d->len,d->whence,d->type);
-	if (debug_mode) {
-		fprintf(stderr,"setlk interrupt (inode:%lu owner:%"PRIu64" lstart:%"PRIu64" llen:%"PRIu64" lwhence:%"PRIu8" ltype:%"PRIu8")\n",(unsigned long int)d->inode,d->ownerid,d->start,d->len,d->whence,d->type);
-	}
-	d->fired = 1;
-}
-
-void mfs_setlk(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi, struct flock *lock, int sl) {
-	struct fuse_ctx ctx;
-
-	ctx = *(fuse_req_ctx(req));
-	oplog_printf(&ctx,"setlk (inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u sleep:%u)\n",(unsigned long int)ino,(unsigned long long int)fi->lock_owner,(unsigned long long int)lock->l_start,(unsigned long long int)lock->l_len,(unsigned int)lock->l_whence,(unsigned int)lock->l_type,(unsigned int)sl);
-	if (debug_mode) {
-		fprintf(stderr,"setlk (inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u sleep:%u)\n",(unsigned long int)ino,(unsigned long long int)fi->lock_owner,(unsigned long long int)lock->l_start,(unsigned long long int)lock->l_len,(unsigned int)lock->l_whence,(unsigned int)lock->l_type,(unsigned int)sl);
-	}
-	if (IS_SPECIAL_INODE(ino)) {
-		fuse_reply_err(req,EPERM);
-		return;
-	}
-//	syslog(LOG_NOTICE,"set lock inode:%lu owner:%llu lstart:%llu llen:%llu lwhence:%u ltype:%u sleep:%u",(unsigned long int)ino,fi->lock_owner,lock->l_start,lock->l_len,lock->l_whence,lock->l_type,sl);
-	if (sl) {
-		uint32_t i;
-		setlk_interrupt data;
-		data.inode = ino;
-		data.ownerid = fi->lock_owner;
-		data.start = lock->l_start;
-		data.len = lock->l_len;
-		data.whence = lock->l_whence;
-		data.type = lock->l_type;
-		data.fired = 0;
-		fuse_req_interrupt_func(req,mfs_setlk_interrupt,&data);
-		for (i=0 ; i<20000 ; i++) {
-			usleep(1000);
-			if (data.fired) {
-				break;
-			}
-		}
-		fuse_req_interrupt_func(req,NULL,NULL);
-	}
-	fuse_reply_err(req,0);
-}
-*/
-#endif
 
 void mfs_init(int debug_mode_in,int keep_cache_in,double direntry_cache_timeout_in,double entry_cache_timeout_in,double attr_cache_timeout_in,double xattr_cache_timeout_in,double groups_cache_timeout,int mkdir_copy_sgid_in,int sugid_clear_mode_in,int xattr_acl_support_in) {
 	const char* sugid_clear_mode_strings[] = {SUGID_CLEAR_MODE_STRINGS};
