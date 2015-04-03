@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -149,8 +149,10 @@ void cpu_used (uint64_t *scpu,uint64_t *ucpu) {
 		rdiff = 0;
 	}
 
+#if !(defined(HAVE_SETITIMER) || defined(HAVE_GETRUSAGE))
 	systime = 0;
 	usertime = 0;
+#endif
 
 //	syslog(LOG_NOTICE,"rdiff1: %"PRIu64,rdiff);
 #if defined(HAVE_SETITIMER)

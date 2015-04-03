@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -103,12 +103,16 @@ static inline void xattr_removeentry(xattr_data_entry *xa) {
 
 void xattr_removeinode(uint32_t inode) {
 	xattr_inode_entry *ih,**ihp;
+	xattr_data_entry *xa,*xan;
 
 	ihp = &(xattr_inode_hash[xattr_inode_hash_fn(inode)]);
 	while ((ih = *ihp)) {
 		if (ih->inode==inode) {
-			while (ih->data_head) {
-				xattr_removeentry(ih->data_head);
+			xa = ih->data_head;
+			while (xa) {
+				xan = xa->next;
+				xattr_removeentry(xa);
+				xa = xan;
 			}
 			*ihp = ih->next;
 			free(ih);

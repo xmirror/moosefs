@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifndef _MASTERCONN_H_
@@ -33,6 +33,7 @@ uint16_t masterconn_getmasterport(void);
 // void masterconn_send_chunk_lost(uint64_t chunkid);
 // void masterconn_send_error_occurred();
 // void masterconn_send_space(uint64_t usedspace,uint64_t totalspace,uint32_t chunkcount,uint64_t tdusedspace,uint64_t tdtotalspace,uint32_t tdchunkcount);
+void masterconn_heavyload(uint32_t load,uint8_t hlstatus);
 int masterconn_init(void);
 
 #endif

@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -168,6 +168,7 @@ int queue_put(void *que,uint32_t id,uint32_t op,uint8_t *data,uint32_t leng) {
 		}
 		if (q->closed) {
 			zassert(pthread_mutex_unlock(&(q->lock)));
+			free(qe);
 			errno = EIO;
 			return -1;
 		}

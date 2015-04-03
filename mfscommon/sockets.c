@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -92,7 +92,11 @@ static inline int sockaddrfill(struct sockaddr_in *sa,const char *hostname,const
 		}
 	}
 
-	r = random()%n;
+	if (n>0) {
+		r = random()%n;
+	} else {
+		r = 0;
+	}
 
 	for (res = reshead ; res ; res=res->ai_next) {
 		if (res->ai_family==family && res->ai_socktype==socktype && res->ai_addrlen==sizeof(struct sockaddr_in)) {

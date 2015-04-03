@@ -1,6 +1,6 @@
 sbin_PROGRAMS=mfsmaster
 
-AM_CPPFLAGS=-I$(top_srcdir)/mfscommon -DAPPNAME=mfsmaster
+AM_CPPFLAGS=-I$(top_srcdir)/mfscommon -DMFSMAXFILES=16384 -DAPPNAME=mfsmaster
 AM_LDFLAGS=$(ZLIB_LIBS)
 
 mfsmaster_SOURCES=\
@@ -13,8 +13,11 @@ mfsmaster_SOURCES=\
 	filesystem.c filesystem.h \
 	xattr.c xattr.h \
 	posixacl.c posixacl.h \
+	flocklocks.c flocklocks.h \
+	posixlocks.c posixlocks.h \
 	openfiles.c openfiles.h \
 	csdb.c csdb.h \
+	labelsets.c labelsets.h \
 	sessions.c sessions.h \
 	metadata.c metadata.h \
 	restore.c restore.h \
@@ -25,6 +28,7 @@ mfsmaster_SOURCES=\
 	matomlserv.c matomlserv.h \
 	datacachemgr.c datacachemgr.h \
 	chartsdata.c chartsdata.h \
+	chartsdefs.h \
 	init.h \
 	../mfscommon/main.c ../mfscommon/main.h \
 	../mfscommon/cfg.c ../mfscommon/cfg.h \

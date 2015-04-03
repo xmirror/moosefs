@@ -1,11 +1,13 @@
 sbin_PROGRAMS=mfsnetdump
 
-AM_CPPFLAGS=-I$(top_srcdir)/mfscommon -I$(top_srcdir)/mfsnetdump -I.
+AM_CPPFLAGS=-I$(top_srcdir)/mfscommon -I.
 
 mfsnetdump_SOURCES=\
 	mfsnetdump.c \
 	commands.h \
 	../mfscommon/MFSCommunication.h
+
+mfsnetdump.c: commands.h
 
 commands.h: ../mfscommon/MFSCommunication.h
 	@echo "  CONV     commands"

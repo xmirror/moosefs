@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifndef _OPENEDFILES_H_
@@ -24,11 +24,13 @@
 #include <inttypes.h>
 #include "bio.h"
 
+uint8_t of_checknode(uint32_t sessionid,uint32_t inode);
 void of_openfile(uint32_t sessionid,uint32_t inode);
 void of_sync(uint32_t sessionid,uint32_t *inode,uint32_t inodecnt);
-void of_sessionremoved(uint32_t sessionid);
+void of_session_removed(uint32_t sessionid);
 uint8_t of_isfileopened(uint32_t inode);
 uint32_t of_noofopenedfiles(uint32_t sessionid);
+uint32_t of_lsof(uint32_t sessionid,uint8_t *buff);
 
 int of_mr_acquire(uint32_t sessionid,uint32_t inode);
 int of_mr_release(uint32_t sessionid,uint32_t inode);

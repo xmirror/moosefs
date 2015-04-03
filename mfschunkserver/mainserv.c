@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -1041,7 +1041,7 @@ uint8_t mainserv_write_last(int sock,uint64_t gchunkid,uint32_t gversion) {
 */
 			status = hdd_write(gchunkid,gversion,blocknum,rptr+4,offset,size,rptr);
 			if (status!=STATUS_OK) {
-//				syslog(LOG_NOTICE,"hdd_write error: %u",status);
+//				syslog(LOG_NOTICE,"hdd_write error: %s",mfsstrerr(status));
 				rstat = 1;
 				break;
 			}

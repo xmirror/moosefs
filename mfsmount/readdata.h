@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifndef _READDATA_H_
@@ -32,5 +32,6 @@ void read_inode_dirty_region(uint32_t inode,uint64_t offset,uint32_t size,const 
 void read_inode_set_length(uint32_t inode,uint64_t newlength,uint8_t active);
 void* read_data_new(uint32_t inode);
 void read_data_end(void *vid);
+void read_inode_dont_modify_atime(uint32_t inode);
 
 #endif

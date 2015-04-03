@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU General Public License
  * along with MooseFS; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- * or visit http://www.gnu.org/licenses/gpl.txt
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #ifdef HAVE_CONFIG_H
@@ -86,31 +86,41 @@ void print_hex(FILE *in,uint32_t vleng) {
 
 int chunk_load(FILE *fd,uint8_t mver) {
 	uint8_t hdr[8];
-	uint8_t loadbuff[16];
+	uint8_t loadbuff[17];
 	const uint8_t *ptr;
-	int32_t r;
+	int32_t r,recsize;
 	uint64_t chunkid,nextchunkid;
 	uint32_t version,lockedto;
+	uint8_t archflag;
 
-	(void)mver;
+	if (mver>0x11) {
+		fprintf(stderr,"loading chunks: unsupported format\n");
+		return -1;
+	}
 
 	if (fread(hdr,1,8,fd)!=8) {
 		return -1;
 	}
 	ptr = hdr;
 	nextchunkid = get64bit(&ptr);
+	recsize = (mver==0x10)?16:17;
 	printf("# nextchunkid: %016"PRIX64"\n",nextchunkid);
 	for (;;) {
-		r = fread(loadbuff,1,16,fd);
+		r = fread(loadbuff,1,recsize,fd);
 		(void)r;
 		ptr = loadbuff;
 		chunkid = get64bit(&ptr);
 		version = get32bit(&ptr);
 		lockedto = get32bit(&ptr);
+		if (mver==0x10) {
+			archflag = 0;
+		} else {
+			archflag = get8bit(&ptr);
+		}
 		if (chunkid==0 && version==0 && lockedto==0) {
 			return 0;
 		}
-		printf("*|i:%016"PRIX64"|v:%08"PRIX32"|t:%10"PRIu32"\n",chunkid,version,lockedto);
+		printf("CHUNK|i:%016"PRIX64"|v:%08"PRIX32"|t:%10"PRIu32"|a:%"PRIu8"\n",chunkid,version,lockedto,archflag);
 	}
 }
 
@@ -147,9 +157,9 @@ int fs_loadedge(FILE *fd,uint8_t mver) {
 	}
 
 	if (parent_id==0) {
-		printf("E|p:      NULL|c:%10"PRIu32"|i:%016"PRIX64"|n:",child_id,edge_id);
+		printf("EDGE|p:      NULL|c:%10"PRIu32"|i:%016"PRIX64"|n:",child_id,edge_id);
 	} else {
-		printf("E|p:%10"PRIu32"|c:%10"PRIu32"|i:%016"PRIX64"|n:",parent_id,child_id,edge_id);
+		printf("EDGE|p:%10"PRIu32"|c:%10"PRIu32"|i:%016"PRIX64"|n:",parent_id,child_id,edge_id);
 	}
 	print_name(fd,nleng);
 	printf("\n");
@@ -195,6 +205,7 @@ int fs_loadnode(FILE *fd,uint8_t mver) {
 	}
 	if (mver<=0x11) {
 		hdrsize = 4+1+2+6*4;
+		type = fsnodes_type_convert(type);
 	} else {
 		hdrsize = 4+1+1+2+6*4;
 		if (mver<=0x12) {
@@ -278,7 +289,7 @@ int fs_loadnode(FILE *fd,uint8_t mver) {
 	ctimestamp = get32bit(&ptr);
 	trashtime = get32bit(&ptr);
 
-	printf("%c|i:%10"PRIu32"|#:%"PRIu8"|e:%1"PRIX8"|m:%04"PRIo16"|u:%10"PRIu32"|g:%10"PRIu32"|a:%10"PRIu32",m:%10"PRIu32",c:%10"PRIu32"|t:%10"PRIu32,c,nodeid,goal,flags,mode,uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime);
+	printf("NODE|k:%c|i:%10"PRIu32"|#:%"PRIu8"|e:%1"PRIX8"|m:%04"PRIo16"|u:%10"PRIu32"|g:%10"PRIu32"|a:%10"PRIu32",m:%10"PRIu32",c:%10"PRIu32"|t:%10"PRIu32,c,nodeid,goal,flags,mode,uid,gid,atimestamp,mtimestamp,ctimestamp,trashtime);
 
 	if (type==TYPE_BLOCKDEV || type==TYPE_CHARDEV) {
 		uint32_t rdev;
@@ -359,6 +370,10 @@ int fs_loadnodes(FILE *fd,uint8_t fver,uint8_t mver) {
 	uint32_t maxnodeid,hashelements;
 	(void)fver;
 	if (fver>=0x20) {
+		if (mver>0x13) {
+			fprintf(stderr,"loading node: unsupported format\n");
+			return -1;
+		}
 		if (mver<=0x10) {
 			if (fread(hdr,1,4,fd)!=4) {
 				fprintf(stderr,"loading node: read error\n");
@@ -392,6 +407,10 @@ int fs_loadedges(FILE *fd,uint8_t mver) {
 	const uint8_t *ptr;
 	uint64_t nextedgeid;
 	int s;
+	if (mver>0x11) {
+		fprintf(stderr,"loading edge: unsupported format\n");
+		return -1;
+	}
 	if (mver>0x10) {
 		if (fread(hdr,1,8,fd)!=8) {
 			fprintf(stderr,"loading edge: read error\n");
@@ -414,7 +433,10 @@ int fs_loadfree(FILE *fd,uint8_t mver) {
 	uint8_t rbuff[8];
 	const uint8_t *ptr;
 	uint32_t t,nodeid,ftime;
-	(void)mver;
+	if (mver>0x10) {
+		fprintf(stderr,"loading free nodes: unsupported format\n");
+		return -1;
+	}
 	if (fread(rbuff,1,4,fd)!=4) {
 		return -1;
 	}
@@ -428,19 +450,25 @@ int fs_loadfree(FILE *fd,uint8_t mver) {
 		ptr = rbuff;
 		nodeid = get32bit(&ptr);
 		ftime = get32bit(&ptr);
-		printf("I|i:%10"PRIu32"|f:%10"PRIu32"\n",nodeid,ftime);
+		printf("FREEID|i:%10"PRIu32"|f:%10"PRIu32"\n",nodeid,ftime);
 		t--;
 	}
 	return 0;
 }
 
 int fs_loadquota(FILE *fd,uint8_t mver) {
-	uint8_t rbuff[66];
+	uint8_t rbuff[70];
 	const uint8_t *ptr;
 	uint8_t exceeded,flags;
-	uint32_t t,nodeid,stimestamp,sinodes,hinodes;
+	uint32_t t,graceperiod,nodeid,stimestamp,sinodes,hinodes;
 	uint64_t slength,hlength,ssize,hsize,srealsize,hrealsize;
-	(void)mver;
+	size_t rsize;
+	
+	if (mver>0x11) {
+		fprintf(stderr,"loading quota: unsupported format\n");
+		return -1;
+	}
+	rsize = (mver==0x10)?66:70;
 	if (fread(rbuff,1,4,fd)!=4) {
 		return -1;
 	}
@@ -448,11 +476,16 @@ int fs_loadquota(FILE *fd,uint8_t mver) {
 	t = get32bit(&ptr);
 	printf("# quota nodes: %"PRIu32"\n",t);
 	while (t>0) {
-		if (fread(rbuff,1,66,fd)!=66) {
+		if (fread(rbuff,1,rsize,fd)!=rsize) {
 			return -1;
 		}
 		ptr = rbuff;
 		nodeid = get32bit(&ptr);
+		if (mver>=0x11) {
+			graceperiod = get32bit(&ptr);
+		} else {
+			graceperiod = 7*86400;
+		}
 		exceeded = get8bit(&ptr);
 		flags = get8bit(&ptr);
 		stimestamp = get32bit(&ptr);
@@ -464,7 +497,7 @@ int fs_loadquota(FILE *fd,uint8_t mver) {
 		hsize = get64bit(&ptr);
 		srealsize = get64bit(&ptr);
 		hrealsize = get64bit(&ptr);
-		printf("Q|i:%10"PRIu32"|e:%c|f:%02"PRIX8"|s:%10"PRIu32,nodeid,(exceeded)?'1':'0',flags,stimestamp);
+		printf("QUOTA|i:%10"PRIu32"|g:%"PRIu32"|e:%c|f:%02"PRIX8"|s:%10"PRIu32,nodeid,graceperiod,(exceeded)?'1':'0',flags,stimestamp);
 		if (flags&QUOTA_FLAG_SINODES) {
 			printf("|si:%10"PRIu32,sinodes);
 		} else {
@@ -518,7 +551,10 @@ int xattr_load(FILE *fd,uint8_t mver) {
 	uint8_t anleng;
 	uint32_t avleng;
 
-	(void)mver;
+	if (mver>0x10) {
+		fprintf(stderr,"loading xattr: unsupported format\n");
+		return -1;
+	}
 
         while (1) {
                 if (fread(hdrbuff,1,4+1+4,fd)!=4+1+4) {
@@ -537,7 +573,7 @@ int xattr_load(FILE *fd,uint8_t mver) {
 			fseek(fd,anleng+avleng,SEEK_CUR);
 			continue;
 		}
-		printf("X|i:%10"PRIu32"|n:",inode);
+		printf("XATTR|i:%10"PRIu32"|n:",inode);
 		print_name(fd,anleng);
 		printf("|v:");
 		print_hex(fd,avleng);
@@ -561,7 +597,10 @@ int posix_acl_load(FILE *fd,uint8_t mver) {
 	uint16_t aclperm;
 	uint32_t acls,acbcnt;
 
-	(void)mver;
+	if (mver>0x10) {
+		fprintf(stderr,"loading posix_acl: unsupported format\n");
+		return -1;
+	}
 
 	while (1) {
                 if (fread(hdrbuff,1,4+1+2*6,fd)!=4+1+2*6) {
@@ -580,7 +619,7 @@ int posix_acl_load(FILE *fd,uint8_t mver) {
                 mask = get16bit(&ptr);
                 namedusers = get16bit(&ptr);
                 namedgroups = get16bit(&ptr);
-		printf("A|i:%10"PRIu32"|t:%"PRIu8"|u:%"PRIo16"|g:%"PRIo16"|o:%"PRIo16"|m:%"PRIo16"|n:(",inode,acltype,userperm,groupperm,otherperm,mask);
+		printf("POSIXACL|i:%10"PRIu32"|t:%"PRIu8"|u:%"PRIo16"|g:%"PRIo16"|o:%"PRIo16"|m:%"PRIo16"|n:(",inode,acltype,userperm,groupperm,otherperm,mask);
 		acls = namedusers+namedgroups;
 		acbcnt = 0;
 		while (acls>0) {
@@ -623,6 +662,11 @@ int sessions_load(FILE *fd,uint8_t mver) {
 	uint32_t ileng,peerip,rootinode,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected;
 	uint8_t sesflags,mingoal,maxgoal;
 	char strip[16];
+
+	if (mver>0x12) {
+		fprintf(stderr,"loading sessions: unsupported format\n");
+		return -1;
+	}
 
 	if (mver<=0x11) {
 		if (fread(hdr,1,8,fd)!=8) {
@@ -691,9 +735,9 @@ int sessions_load(FILE *fd,uint8_t mver) {
 		makestrip(strip,peerip);
 		if (mver>=0x11) {
 			disconnected = get32bit(&ptr);
-			printf("M|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|d:%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected);
+			printf("SESSION|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|d:%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid,disconnected);
 		} else {
-			printf("M|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid);
+			printf("SESSION|s:%10"PRIu32"|p:%s|r:%10"PRIu32"|f:%02"PRIX8"|g:%"PRIu8"-%"PRIu8"|t:%10"PRIu32"-%10"PRIu32"|m:%10"PRIu32",%10"PRIu32",%10"PRIu32",%10"PRIu32"|c:",sessionid,strip,rootinode,sesflags,mingoal,maxgoal,mintrashtime,maxtrashtime,rootuid,rootgid,mapalluid,mapallgid);
 		}
 		for (i=0 ; i<statsinfile ; i++) {
 			printf("%c%"PRIu32,(i==0)?'[':',',get32bit(&ptr));
@@ -719,6 +763,10 @@ int csdb_load(FILE *fd,uint8_t mver) {
 	size_t bsize;
 	char strip[16];
 
+	if (mver>0x12) {
+		fprintf(stderr,"loading chunk servers: unsupported format\n");
+		return -1;
+	}
 	if (mver<=0x10) {
 		bsize = 6;
 	} else if (mver<=0x11) {
@@ -743,20 +791,20 @@ int csdb_load(FILE *fd,uint8_t mver) {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
 			makestrip(strip,ip);
-			printf("Z|i:%s|p:%5"PRIu16"\n",strip,port);
+			printf("CHUNKSERVER|i:%s|p:%5"PRIu16"\n",strip,port);
 		} else if (mver<=0x11) {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
 			csid = get16bit(&ptr);
 			makestrip(strip,ip);
-			printf("Z|i:%s|p:%5"PRIu16"|#:%5"PRIu16"\n",strip,port,csid);
+			printf("CHUNKSERVER|i:%s|p:%5"PRIu16"|#:%5"PRIu16"\n",strip,port,csid);
 		} else {
 			ip = get32bit(&ptr);
 			port = get16bit(&ptr);
 			csid = get16bit(&ptr);
 			maintenance = get8bit(&ptr);
 			makestrip(strip,ip);
-			printf("Z|i:%s|p:%5"PRIu16"|#:%5"PRIu16"|m:%u\n",strip,port,csid,(maintenance)?1:0);
+			printf("CHUNKSERVER|i:%s|p:%5"PRIu16"|#:%5"PRIu16"|m:%u\n",strip,port,csid,(maintenance)?1:0);
 		}
 		t--;
 	}
@@ -768,7 +816,10 @@ int of_load(FILE *fd,uint8_t mver) {
 	const uint8_t *ptr;
 	uint32_t sessionid,inode;
 
-	(void)mver;
+	if (mver>0x10) {
+		fprintf(stderr,"loading open files: unsupported format\n");
+		return -1;
+	}
 
 	for (;;) {
 		if (fread(loadbuff,1,8,fd)!=8) {
@@ -779,12 +830,250 @@ int of_load(FILE *fd,uint8_t mver) {
 		sessionid = get32bit(&ptr);
 		inode = get32bit(&ptr);
 		if (sessionid>0 && inode>0) {
-			printf("O|s:%10"PRIu32"|i:%10"PRIu32"\n",sessionid,inode);
+			printf("OPENFILE|s:%10"PRIu32"|i:%10"PRIu32"\n",sessionid,inode);
 		} else {
 			return 0;
 		}
 	}
 	return 0;       // unreachable
+}
+
+int flock_load(FILE *fd,uint8_t mver) {
+	uint8_t loadbuff[17];
+	const uint8_t *ptr;
+	uint32_t sessionid,inode;
+	uint64_t owner;
+	uint8_t ltype;
+
+	if (mver>0x10) {
+		fprintf(stderr,"loading flock locks: unsupported format\n");
+		return -1;
+	}
+
+	for (;;) {
+		if (fread(loadbuff,1,17,fd)!=17) {
+			fprintf(stderr,"loading flock locks: read error\n");
+			return -1;
+		}
+		ptr = loadbuff;
+		inode = get32bit(&ptr);
+		sessionid = get32bit(&ptr);
+		owner = get64bit(&ptr);
+		ltype = get8bit(&ptr);
+		if (inode==0 && owner==0 && sessionid==0) {
+			return 0;
+		}
+		printf("FLOCK|i:%10"PRIu32"|s:%10"PRIu32"|o:%016"PRIX64"|t:%c\n",inode,sessionid,owner,ltype?'W':'R');
+	}
+	return 0;	// unreachable
+}
+
+int posix_lock_load(FILE *fd,uint8_t mver) {
+	uint8_t loadbuff[37];
+	const uint8_t *ptr;
+	uint32_t sessionid,inode,pid;
+	uint64_t owner,start,end;
+	uint8_t type;
+
+	if (mver>0x10) {
+		fprintf(stderr,"loading posix locks: unsupported format\n");
+		return -1;
+	}
+
+	for (;;) {
+		if (fread(loadbuff,1,37,fd)!=37) {
+			fprintf(stderr,"loading posix locks: read error\n");
+			return -1;
+		}
+		ptr = loadbuff;
+		inode = get32bit(&ptr);
+		owner = get64bit(&ptr);
+		sessionid = get32bit(&ptr);
+		pid = get32bit(&ptr);
+		start = get64bit(&ptr);
+		end = get64bit(&ptr);
+		type = get8bit(&ptr);
+		if (inode==0 && owner==0 && sessionid==0) {
+			return 0;
+		}
+		printf("POSIXLOCK|i:%10"PRIu32"|s:%10"PRIu32"|o:%016"PRIX64"|p:%10"PRIu32"|r:<%20"PRIu64",%20"PRIu64")|t:%c\n",inode,sessionid,owner,pid,start,end,(type==POSIX_LOCK_RDLCK)?'R':(type==POSIX_LOCK_WRLCK)?'W':'?');
+	}
+	return 0;	// unreachable
+}
+
+void print_labels(const uint8_t **rptr,uint8_t cnt,uint8_t orgroup) {
+	uint8_t i,j,k;
+	uint8_t p;
+	uint32_t mask;
+	for (i=0 ; i<cnt ; i++) {
+		if (i>0) {
+			printf(":");
+		}
+		p = 1;
+		for (j=0 ; j<orgroup ; j++) {
+			mask = get32bit(rptr);
+			if (j==0 && mask==0) {
+				printf("*");
+			}
+			if (mask==0) {
+				p = 0;
+			}
+			if (p) {
+				if (j>0) {
+					printf("+");
+				}
+				for (k=0 ; k<26 ; k++) {
+					if (mask & (1<<k)) {
+						printf("%c",'A'+k);
+					}
+				}
+			}
+		}
+	}
+}
+
+int labelset_load(FILE *fd,uint8_t mver) {
+	uint8_t *databuff = NULL;
+	const uint8_t *ptr;
+	uint32_t chunkcount;
+	uint16_t labelsetid;
+	uint16_t arch_delay;
+	uint8_t create_mode;
+	uint8_t create_labelscnt;
+	uint8_t keep_labelscnt;
+	uint8_t arch_labelscnt;
+	uint8_t descrleng;
+	uint8_t i;
+	uint8_t orgroup;
+	uint8_t hdrleng;
+
+	if (mver>0x15) {
+		fprintf(stderr,"loading labelset: unsupported format\n");
+		return -1;
+	}
+
+	for (i=0 ; i<26 ; i++) {
+		if (fread(&descrleng,1,1,fd)!=1) {
+			fprintf(stderr,"loading labelset: read error\n");
+			return -1;
+		}
+		if (descrleng>128) {
+			fprintf(stderr,"loading labelset: description too long\n");
+			return -1;
+		}
+		printf("LABELDESC|l:%c|n:",i+'A');
+		print_name(fd,descrleng);
+		printf("\n");
+	}
+
+	if (mver==0x10) {
+		orgroup = 1;
+	} else {
+		if (fread(&orgroup,1,1,fd)!=1) {
+			fprintf(stderr,"loading labelset: read error\n");
+			return -1;
+		}
+	}
+	if (orgroup<1) {
+		fprintf(stderr,"loading labelset: zero or-groups !!!\n");
+		return -1;
+	}
+	databuff = malloc(3U*9U*4U*(uint32_t)orgroup);
+	hdrleng = (mver==0x12)?11:(mver<=0x13)?3:(mver<=0x14)?5:8;
+
+	while (1) {
+		if (fread(databuff,1,hdrleng,fd)!=hdrleng) {
+			fprintf(stderr,"loading labelset: read error\n");
+			return -1;
+		}
+		ptr = databuff;
+		labelsetid = get16bit(&ptr);
+		if (mver>0x14) {
+			create_mode = get8bit(&ptr);
+			arch_delay = get16bit(&ptr);
+			create_labelscnt = get8bit(&ptr);
+			keep_labelscnt = get8bit(&ptr);
+			arch_labelscnt = get8bit(&ptr);
+			chunkcount = 0;
+		} else if (mver>0x13) {
+			create_mode = get8bit(&ptr);
+			create_labelscnt = get8bit(&ptr);
+			keep_labelscnt = get8bit(&ptr);
+			arch_labelscnt = keep_labelscnt;
+			arch_delay = 0;
+			chunkcount = 0;
+		} else {
+			create_labelscnt = get8bit(&ptr);
+			keep_labelscnt = create_labelscnt;
+			arch_labelscnt = create_labelscnt;
+			create_mode = CREATE_MODE_STD;
+			arch_delay = 0;
+			if (mver==0x12) {
+				chunkcount = get32bit(&ptr);
+				ptr+=4;
+			} else {
+				chunkcount = 0;
+			}
+		}
+		if (labelsetid==0 && create_labelscnt==0 && keep_labelscnt==0 && arch_labelscnt==0 && chunkcount==0 && arch_delay==0) {
+			break;
+		}
+		if (create_labelscnt==0 || create_labelscnt>9 || keep_labelscnt==0 || keep_labelscnt>9 || arch_labelscnt==0 || arch_labelscnt>9) {
+			fprintf(stderr,"loading labelset: data format error (labelsetid: %"PRIu16" ; create_mode: %"PRIu8" ; create_labelscnt: %"PRIu8" ; keep_labelscnt: %"PRIu8" ; arch_labelscnt: %"PRIu8" ; arch_delay: %"PRIu16")\n",labelsetid,create_mode,create_labelscnt,keep_labelscnt,arch_labelscnt,arch_delay);
+			free(databuff);
+			databuff=NULL;
+			return -1;
+		}
+		if (mver>0x14) {
+			if (fread(databuff,1,(create_labelscnt+keep_labelscnt+arch_labelscnt)*4*orgroup,fd)!=(size_t)((create_labelscnt+keep_labelscnt+arch_labelscnt)*4*orgroup)) {
+				fprintf(stderr,"loading labelset: read error\n");
+				free(databuff);
+				databuff=NULL;
+				return -1;
+			}
+		} else if (mver>0x13) {
+			if (fread(databuff,1,(create_labelscnt+keep_labelscnt)*4*orgroup,fd)!=(size_t)((create_labelscnt+keep_labelscnt)*4*orgroup)) {
+				fprintf(stderr,"loading labelset: read error\n");
+				free(databuff);
+				databuff=NULL;
+				return -1;
+			}
+		} else {
+			if (fread(databuff,1,create_labelscnt*4*orgroup,fd)!=(size_t)(create_labelscnt*4*orgroup)) {
+				fprintf(stderr,"loading labelset: read error\n");
+				free(databuff);
+				databuff=NULL;
+				return -1;
+			}
+		}
+		if (chunkcount>0) {
+			fseek(fd,chunkcount*8,SEEK_CUR);
+		}
+		ptr = databuff;
+		printf("LABELSET|#:%5"PRIu16"|m:%u|d:%5"PRIu16,labelsetid,create_mode,arch_delay);
+		if (mver<=0x13) {
+			printf("|c+k+a: ");
+		} else {
+			printf("|c: ");
+		}
+		print_labels(&ptr,create_labelscnt,orgroup);
+		if (mver>0x13) {
+			if (mver<=0x14) {
+				printf(" |k+a: ");
+			} else {
+				printf(" |k: ");
+			}
+			print_labels(&ptr,keep_labelscnt,orgroup);
+			if (mver>0x14) {
+				printf(" |a: ");
+				print_labels(&ptr,arch_labelscnt,orgroup);
+			}
+		}
+		printf("\n");
+	}
+	free(databuff);
+	databuff=NULL;
+	return 0;
 }
 
 int hexdump(FILE *fd,uint64_t sleng) {
@@ -906,7 +1195,17 @@ int fs_load(FILE *fd,uint8_t fver) {
 		printf("# section header: %c%c%c%c%c%c%c%c (%02X%02X%02X%02X%02X%02X%02X%02X) ; length: %"PRIu64"\n",dispchar(hdr[0]),dispchar(hdr[1]),dispchar(hdr[2]),dispchar(hdr[3]),dispchar(hdr[4]),dispchar(hdr[5]),dispchar(hdr[6]),dispchar(hdr[7]),hdr[0],hdr[1],hdr[2],hdr[3],hdr[4],hdr[5],hdr[6],hdr[7],sleng);
 		mver = (((hdr[5]-'0')&0xF)<<4)+(hdr[7]&0xF);
 		printf("# section type: %c%c%c%c ; version: 0x%02"PRIX8"\n",dispchar(hdr[0]),dispchar(hdr[1]),dispchar(hdr[2]),dispchar(hdr[3]),mver);
-		if (memcmp(hdr,"NODE",4)==0) {
+		if (memcmp(hdr,"SESS",4)==0) {
+			if (sessions_load(fd,mver)<0) {
+				printf("error reading metadata (SESS)\n");
+				return -1;
+			}
+		} else if (memcmp(hdr,"LABS",4)==0) {
+			if (labelset_load(fd,mver)<0) {
+				printf("error reading metadata (LABS)\n");
+				return -1;
+			}
+		} else if (memcmp(hdr,"NODE",4)==0) {
 			if (fs_loadnodes(fd,fver,mver)<0) {
 				printf("error reading metadata (NODE)\n");
 				return -1;
@@ -926,11 +1225,6 @@ int fs_load(FILE *fd,uint8_t fver) {
 				printf("error reading metadata (QUOT)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"CHNK",4)==0) {
-			if (chunk_load(fd,mver)<0) {
-				printf("error reading metadata (CHNK)\n");
-				return -1;
-			}
 		} else if (memcmp(hdr,"XATR",4)==0) {
 			if (xattr_load(fd,mver)<0) {
 				printf("error reading metadata (XATR)\n");
@@ -941,9 +1235,14 @@ int fs_load(FILE *fd,uint8_t fver) {
 				printf("error reading metadata (PACL)\n");
 				return -1;
 			}
-		} else if (memcmp(hdr,"SESS",4)==0) {
-			if (sessions_load(fd,mver)<0) {
-				printf("error reading metadata (SESS)\n");
+		} else if (memcmp(hdr,"FLCK",4)==0) {
+			if (flock_load(fd,mver)<0) {
+				printf("error reading metadata (FLCK)\n");
+				return -1;
+			}
+		} else if (memcmp(hdr,"PLCK",4)==0) {
+			if (posix_lock_load(fd,mver)<0) {
+				printf("error reading metadata (PLCK)\n");
 				return -1;
 			}
 		} else if (memcmp(hdr,"OPEN",4)==0) {
@@ -954,6 +1253,11 @@ int fs_load(FILE *fd,uint8_t fver) {
 		} else if (memcmp(hdr,"CSDB",4)==0) {
 			if (csdb_load(fd,mver)<0) {
 				printf("error reading metadata (CSDB)\n");
+				return -1;
+			}
+		} else if (memcmp(hdr,"CHNK",4)==0) {
+			if (chunk_load(fd,mver)<0) {
+				printf("error reading metadata (CHNK)\n");
 				return -1;
 			}
 		} else {
