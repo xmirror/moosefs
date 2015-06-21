@@ -1,25 +1,29 @@
-# Created by: Jakub Kruszona-Zawadzki <acid@moosefs.com> ; Based on port created by: Chifeng Qu <chifeng@gmail.com>
-# $FreeBSD$
+PORTVERSION=	%%VERSION%%
+PORTREVISION=	1
 
-PORTNAME=	moosefs
-#PORTVERSION=	# set in 'include'
-#PORTREVISION=	# set in 'include'
-CATEGORIES=	sysutils
-PKGNAMESUFFIX=	-common
+MASTER_SITES=	http://ppa.moosefs.com/src/
 
-.include "bsd.port.moosefs.mk"
+MAINTAINER=	freebsd@moosefs.com
 
-COMMENT=	Common package with general mans etc.
+LICENSE=	GPLv2
 
-CONFIGURE_ARGS+=	--enable-generalmans \
-			--disable-mfsmaster \
-			--disable-mfsmetalogger \
-			--disable-mfscgiserv \
-			--disable-mfscgi \
-			--disable-mfscli \
-			--disable-mfsnetdump \
-			--disable-mfssupervisor \
-			--disable-mfschunkserver \
-			--disable-mfsmount
 
-.include <bsd.port.mk>
+GNU_CONFIGURE=	yes
+
+MFS_USER=	mfs
+MFS_GROUP=	mfs
+MFS_WORKDIR=	/var
+MFS_CGIDIR=	${PREFIX}/share/mfscgi
+MFS_CGISERVDIR=	${PREFIX}/sbin
+
+DISTNAME=	${PORTNAME}-${PORTVERSION}-${PORTREVISION}
+WRKSRC=		${WRKDIR}/${PORTNAME}-${PORTVERSION}
+
+USERS=		${MFS_USER}
+GROUPS=		${MFS_GROUP}
+
+CONFIGURE_ARGS+=	--localstatedir=${MFS_WORKDIR} \
+			--with-default-user=${MFS_USER} \
+			--with-default-group=${MFS_GROUP} \
+			--with-mfscgiserv-dir=${MFS_CGISERVDIR} \
+			--with-mfscgi-dir=${MFS_CGIDIR}
