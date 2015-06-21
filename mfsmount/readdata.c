@@ -90,9 +90,13 @@ typedef struct cblock_s {
 
 #define MAXREQINQUEUE 16
 
+#define MREQ_CACHE_SIZE 256
+
 #define MREQ_TIMEOUT 1.0
 
 enum {NEW,INQUEUE,BUSY,REFRESH,BREAK,FILLED,READY,FREE};
+
+enum {MR_INIT,MR_READY,MR_INVALID};
 
 #ifdef RDEBUG
 char* read_data_modename(uint8_t mode) {
@@ -147,11 +151,8 @@ typedef struct rrequest_s {
 	uint32_t currentpos;
 	uint32_t chindx;
 	double modified;
-//	uint8_t filled;
 	uint8_t refresh;
 	uint8_t mode;
-//	uint8_t busy;
-//	uint8_t free;
 	uint16_t lcnt;
 	uint16_t waiting;
 	pthread_cond_t cond;
@@ -162,7 +163,6 @@ typedef struct inodedata_s {
 	uint32_t inode;
 	uint32_t seqdata;
 	uint64_t fleng;
-//	uint32_t cacheblockcount;
 	int status;
 	uint16_t closewaiting;
 	uint32_t trycnt;
@@ -172,28 +172,37 @@ typedef struct inodedata_s {
 	uint8_t canmodatime;
 	uint8_t readahead;
 	uint64_t lastoffset;
-	double mreq_time;
-	uint32_t mreq_chindx;
-	uint64_t mreq_chunkid;
-	uint32_t mreq_version;
-	uint8_t mreq_csdataver;
-	uint32_t mreq_csdatasize;
-	uint8_t *mreq_csdata;
-	uint32_t mreq_csdatabuffsize;
-//	uint64_t lastchunkid;
-//	uint32_t lastip;
-//	uint16_t lastport;
-//	uint64_t lastchunkid[MAXREQINQUEUE];
-//	uint32_t lastip[MAXREQINQUEUE];
-//	uint16_t lastport[MAXREQINQUEUE];
-	uint8_t laststatus;
-//	uint8_t usedentry[MAXREQINQUEUE];
+//	double mreq_time;
+//	uint32_t mreq_chindx;
+//	uint64_t mreq_chunkid;
+//	uint32_t mreq_version;
+//	uint8_t mreq_csdataver;
+//	uint32_t mreq_csdatasize;
+//	uint8_t *mreq_csdata;
+//	uint32_t mreq_csdatabuffsize;
+//	uint8_t laststatus;
 	rrequest *reqhead,**reqtail;
-//	cblock *datachainhead,*datachaintail;
 	pthread_cond_t closecond;
 	pthread_mutex_t lock;
 	struct inodedata_s *next;
 } inodedata;
+
+typedef struct mreqcache_s {
+	double time;
+	uint32_t inode;
+	uint32_t chindx;
+	uint64_t chunkid;
+	uint32_t version;
+	uint8_t csdataver;
+	uint32_t csdatasize;
+	uint8_t *csdata;
+//	uint32_t csdatabuffsize;
+	uint8_t reqwaiting;
+	uint8_t status;
+	uint8_t state;
+	struct mreqcache_s *next;
+	pthread_cond_t reqcond;
+} mreqcache;
 
 typedef struct worker_s {
 	pthread_t thread_id;
@@ -215,7 +224,10 @@ static uint64_t reqbufftotalsize;
 static pthread_mutex_t buffsizelock;
 #endif
 
-static inodedata **idhash;
+static mreqcache **mreq_cache;
+static pthread_mutex_t mreq_cache_lock;
+
+static inodedata **indhash;
 
 static pthread_mutex_t glock;
 
@@ -236,6 +248,160 @@ static pthread_attr_t worker_thattr;
 //static inodedata *read_worker_id[WORKERS];
 
 static void *jqueue; //,*dqueue;
+
+/* master request cache */
+
+static inline void read_invalidate_masterdata(uint32_t inode,uint32_t chindx) {
+	uint32_t hash;
+	mreqcache *mrc;
+
+	zassert(pthread_mutex_lock(&mreq_cache_lock));
+	hash = ((inode * 0x4A599F6D + chindx) * 0xB15831CB) % MREQ_CACHE_SIZE;
+	for (mrc = mreq_cache[hash] ; mrc ; mrc=mrc->next) {
+		if (mrc->inode==inode && mrc->chindx==chindx) {
+			if (mrc->state==MR_READY) {
+				mrc->state=MR_INVALID;
+			}
+			zassert(pthread_mutex_unlock(&mreq_cache_lock));
+			return;
+		}
+	}
+	zassert(pthread_mutex_unlock(&mreq_cache_lock));
+}
+
+static inline uint8_t read_get_masterdata(inodedata *ind,cspri chain[100],uint16_t *chainelements,uint32_t chindx,uint64_t *mfleng,uint64_t *chunkid,uint32_t *version) {
+	uint32_t hash;
+	mreqcache *mrc,**mrcp;
+	const uint8_t *csdata;
+	uint8_t canmodatime;
+	uint8_t flengisvalid;
+	uint32_t inode;
+	double now;
+
+//	zassert(pthread_mutex_lock(&(ind->lock)));
+	*mfleng = ind->fleng;
+	inode = ind->inode;
+	flengisvalid = ind->flengisvalid;
+	zassert(pthread_mutex_unlock(&(ind->lock)));
+
+	now = monotonic_seconds();
+	zassert(pthread_mutex_lock(&mreq_cache_lock));
+	hash = ((inode * 0x4A599F6D + chindx) * 0xB15831CB) % MREQ_CACHE_SIZE;
+	mrcp = mreq_cache+hash;
+	while ((mrc = *mrcp)) {
+		if (mrc->inode==inode && mrc->chindx==chindx) {
+			if (mrc->state==MR_INIT) { // request in progress - ignore other fields
+				while (mrc->state==MR_INIT) {
+					mrc->reqwaiting = 1;
+					zassert(pthread_cond_wait(&(mrc->reqcond),&mreq_cache_lock));
+				}
+				if (mrc->status!=STATUS_OK) {
+					zassert(pthread_mutex_unlock(&mreq_cache_lock));
+					*chunkid = 0;
+					*version = 0;
+					*chainelements = 0;
+					return mrc->status;
+				}
+				*chunkid = mrc->chunkid;
+				*version = mrc->version;
+				if (mrc->csdata && mrc->csdatasize>0) {
+					*chainelements = csorder_sort(chain,mrc->csdataver,mrc->csdata,mrc->csdatasize,0);
+				} else {
+					*chainelements = 0;
+				}
+				zassert(pthread_mutex_unlock(&mreq_cache_lock));
+				return STATUS_OK;
+			} else if (mrc->state==MR_READY && mrc->status==STATUS_OK && flengisvalid) {
+				*chunkid = mrc->chunkid;
+				*version = mrc->version;
+				if (mrc->csdata && mrc->csdatasize>0) {
+					*chainelements = csorder_sort(chain,mrc->csdataver,mrc->csdata,mrc->csdatasize,0);
+				} else {
+					*chainelements = 0;
+				}
+				zassert(pthread_mutex_unlock(&mreq_cache_lock));
+				return STATUS_OK;
+			} else { //refresh data
+				break;
+			}
+		} else if (mrc->state==MR_READY && (mrc->time + MREQ_TIMEOUT < now || mrc->status!=STATUS_OK)) {
+			*mrcp = mrc->next;
+			if (mrc->csdata) {
+				free(mrc->csdata);
+			}
+			free(mrc);
+		} else {
+			mrcp = &(mrc->next);
+		}
+	}
+	if (mrc==NULL) {
+		mrc = malloc(sizeof(mreqcache));
+		memset(mrc,0,sizeof(mreqcache));
+		mrc->inode = inode;
+		mrc->chindx = chindx;
+		mrc->state = MR_INIT;
+		mrc->reqwaiting = 0;
+		zassert(pthread_cond_init(&(mrc->reqcond),NULL));
+		mrc->next = mreq_cache[hash];
+		mreq_cache[hash] = mrc;
+	} else {
+		if (mrc->csdata) {
+			free(mrc->csdata);
+		}
+		mrc->csdata = NULL;
+		mrc->csdatasize = 0;
+		mrc->state = MR_INIT;
+		mrc->reqwaiting = 0;
+	}
+	zassert(pthread_mutex_unlock(&mreq_cache_lock));
+	zassert(pthread_mutex_lock(&(ind->lock)));
+	canmodatime = ind->canmodatime;
+	if (canmodatime==2) {
+		ind->canmodatime = 1;
+	}
+	zassert(pthread_mutex_unlock(&(ind->lock)));
+	mrc->status = fs_readchunk(inode,chindx,canmodatime,&(mrc->csdataver),mfleng,&(mrc->chunkid),&(mrc->version),&csdata,&(mrc->csdatasize));
+	if (mrc->status==STATUS_OK) {
+		if (mrc->csdatasize>0) {
+			mrc->csdata = malloc(mrc->csdatasize);
+			passert(mrc->csdata);
+			memcpy(mrc->csdata,csdata,mrc->csdatasize);
+		} else {
+			mrc->csdata = NULL;
+		}
+		zassert(pthread_mutex_lock(&(ind->lock)));
+		ind->fleng = *mfleng;
+		ind->flengisvalid = 1;
+//		ind->laststatus = 1;
+		zassert(pthread_mutex_unlock(&(ind->lock)));
+	} else {
+		mrc->csdata = NULL;
+		mrc->csdatasize = 0;
+	}
+	zassert(pthread_mutex_lock(&mreq_cache_lock));
+	mrc->time = monotonic_seconds();
+	mrc->state = MR_READY;
+	if (mrc->reqwaiting) {
+		zassert(pthread_cond_broadcast(&(mrc->reqcond)));
+	}
+	mrc->reqwaiting = 0;
+	if (mrc->status!=STATUS_OK) {
+		zassert(pthread_mutex_unlock(&mreq_cache_lock));
+		*chunkid = 0;
+		*version = 0;
+		*chainelements = 0;
+		return mrc->status;
+	}
+	*chunkid = mrc->chunkid;
+	*version = mrc->version;
+	if (mrc->csdata && mrc->csdatasize>0) {
+		*chainelements = csorder_sort(chain,mrc->csdataver,mrc->csdata,mrc->csdatasize,0);
+	} else {
+		*chainelements = 0;
+	}
+	zassert(pthread_mutex_unlock(&mreq_cache_lock));
+	return STATUS_OK;
+}
 
 /* queues */
 
@@ -259,11 +425,11 @@ void read_delayed_enqueue(rrequest *rreq,uint32_t usecs) {
 void* read_dqueue_worker(void *arg) {
 	uint64_t t,usec;
 	uint32_t husec,lusec,cnt;
-	uint8_t *id;
+	uint8_t *ind;
 	(void)arg;
 	for (;;) {
-		queue_get(dqueue,&husec,&lusec,&id,&cnt);
-		if (id==NULL) {
+		queue_get(dqueue,&husec,&lusec,&ind,&cnt);
+		if (ind==NULL) {
 			return NULL;
 		}
 		t = monotonic_useconds();
@@ -285,55 +451,55 @@ void* read_dqueue_worker(void *arg) {
 		}
 		if (cnt>0) {
 			t = monotonic_useconds();
-			queue_put(dqueue,t>>32,t&0xFFFFFFFFU,(uint8_t*)id,cnt);
+			queue_put(dqueue,t>>32,t&0xFFFFFFFFU,(uint8_t*)ind,cnt);
 		} else {
-			queue_put(jqueue,0,0,id,0);
+			queue_put(jqueue,0,0,ind,0);
 		}
 	}
 	return NULL;
 }
 */
 
-// void read_job_end(inodedata *id,int status,uint32_t delay) {
+// void read_job_end(inodedata *ind,int status,uint32_t delay) {
 void read_job_end(rrequest *rreq,int status,uint32_t delay) {
-	inodedata *id;
+	inodedata *ind;
 	uint8_t breakmode;
 #ifdef RDEBUG
 	uint64_t rbuffsize;
 #endif
 
-	id = rreq->ind;
-	zassert(pthread_mutex_lock(&(id->lock)));
+	ind = rreq->ind;
+	zassert(pthread_mutex_lock(&(ind->lock)));
 	breakmode = 0;
 	if (rreq->mode==FILLED) {
 		rreq->mode = READY;
-		id->trycnt = 0;
+		ind->trycnt = 0;
 	} else {
 		if (rreq->mode==BREAK) {
 			breakmode = 1;
 		}
 		rreq->mode = NEW;
 	}
-	id->inqueue--;
+	ind->inqueue--;
 	if (status) {
-		if (id->closing==0) {
+		if (ind->closing==0) {
 			errno = status;
-			syslog(LOG_WARNING,"error reading file number %"PRIu32": %s",id->inode,strerr(errno));
+			syslog(LOG_WARNING,"error reading file number %"PRIu32": %s",ind->inode,strerr(errno));
 		}
-		id->status = status;
+		ind->status = status;
 	}
-	status = id->status;
+	status = ind->status;
 
-	if (id->closing || status!=STATUS_OK || breakmode) {
+	if (ind->closing || status!=STATUS_OK || breakmode) {
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: readworker end (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" - closing: %u ; status: %u ; breakmode: %u\n",monotonic_seconds(),rreq->offset,rreq->leng,id->inode,id->closing,status,breakmode);
+		fprintf(stderr,"%.6lf: readworker end (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" - closing: %u ; status: %u ; breakmode: %u\n",monotonic_seconds(),rreq->offset,rreq->leng,ind->inode,ind->closing,status,breakmode);
 #endif
 		if (rreq->lcnt==0) {
 			*(rreq->prev) = rreq->next;
 			if (rreq->next) {
 				rreq->next->prev = rreq->prev;
 			} else {
-				id->reqtail = rreq->prev;
+				ind->reqtail = rreq->prev;
 			}
 #ifdef HAVE___SYNC_OP_AND_FETCH
 #ifdef RDEBUG
@@ -355,11 +521,11 @@ void read_job_end(rrequest *rreq,int status,uint32_t delay) {
 			free(rreq->data);
 			free(rreq);
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: inode: %"PRIu32" - reqhead: %s (reqbufftotalsize: %"PRIu64")\n",monotonic_seconds(),id->inode,id->reqhead?"NOT NULL":"NULL",rbuffsize);
+			fprintf(stderr,"%.6lf: inode: %"PRIu32" - reqhead: %s (reqbufftotalsize: %"PRIu64")\n",monotonic_seconds(),ind->inode,ind->reqhead?"NOT NULL":"NULL",rbuffsize);
 #endif
 
-			if (id->closewaiting && id->reqhead==NULL) {
-				zassert(pthread_cond_broadcast(&(id->closecond)));
+			if (ind->closewaiting && ind->reqhead==NULL) {
+				zassert(pthread_cond_broadcast(&(ind->closecond)));
 			}
 		} else {
 			if (rreq->mode!=READY) {
@@ -371,15 +537,15 @@ void read_job_end(rrequest *rreq,int status,uint32_t delay) {
 			}
 		}
 	} else {
-		for (rreq = id->reqhead ; rreq && id->inqueue < MAXREQINQUEUE ; rreq=rreq->next) {
+		for (rreq = ind->reqhead ; rreq && ind->inqueue < MAXREQINQUEUE ; rreq=rreq->next) {
 			if (rreq->mode==NEW) {
 				rreq->mode = INQUEUE;
 		                read_delayed_enqueue(rreq,delay);
-				id->inqueue++;
+				ind->inqueue++;
 			}
 		}
         }
-        zassert(pthread_mutex_unlock(&(id->lock)));
+        zassert(pthread_mutex_unlock(&(ind->lock)));
 }
 
 void* read_worker(void *arg);
@@ -489,13 +655,13 @@ void* read_worker(void *arg) {
 	uint64_t mfleng;
 	uint64_t chunkid;
 	uint32_t version;
-	const uint8_t *csdata;
+//	const uint8_t *csdata;
 	uint32_t csver;
 	uint32_t cnt;
-	uint32_t csdatasize;
-	uint8_t csdataver;
+//	uint32_t csdatasize;
+//	uint8_t csdataver;
 	uint8_t rdstatus;
-	uint8_t canmodatime;
+//	uint8_t canmodatime;
 	int status;
 	char csstrip[16];
 	uint8_t reqsend;
@@ -507,7 +673,7 @@ void* read_worker(void *arg) {
 	uint8_t firsttime = 1;
 	worker *w = (worker*)arg;
 
-	inodedata *id;
+	inodedata *ind;
 	rrequest *rreq;
 
 	ip = 0;
@@ -556,79 +722,82 @@ void* read_worker(void *arg) {
 		zassert(pthread_mutex_unlock(&glock));
 
 		rreq = (rrequest*)data;
-		id = rreq->ind;
+		ind = rreq->ind;
 
-		zassert(pthread_mutex_lock(&(id->lock)));
+		zassert(pthread_mutex_lock(&(ind->lock)));
 		rreq->mode = BUSY;
 
 		chindx = rreq->chindx;
-		status = id->status;
-		inode = id->inode;
+		status = ind->status;
+		inode = ind->inode;
 		rleng = rreq->leng;
-		trycnt = id->trycnt;
+		trycnt = ind->trycnt;
 
 		if (status!=STATUS_OK) {
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 			read_job_end(rreq,status,0);
 			continue;
 		}
-		if (id->closing) {
-			zassert(pthread_mutex_unlock(&(id->lock)));
+		if (ind->closing) {
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 			read_job_end(rreq,0,0);
 			continue;
 		}
 
+		rdstatus = read_get_masterdata(ind,chain,&chainelements,chindx,&mfleng,&chunkid,&version); // unlocks (ind->lock)
+
+#if 0
 		now = monotonic_seconds();
-		if (id->mreq_time + MREQ_TIMEOUT > now && chindx == id->mreq_chindx && id->laststatus!=0 && id->flengisvalid) {
+		if (ind->mreq_time + MREQ_TIMEOUT > now && chindx == ind->mreq_chindx && ind->laststatus!=0 && ind->flengisvalid) {
 #ifdef RDEBUG
 			fprintf(stderr,"%.6lf: readworker (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" ; indx: %"PRIu32" (use chunk data cache)\n",monotonic_seconds(),rreq->offset,rreq->leng,inode,chindx);
 #endif
-			csdataver = id->mreq_csdataver;
-			chunkid = id->mreq_chunkid;
-			version = id->mreq_version;
-			csdata = id->mreq_csdata;
-			csdatasize = id->mreq_csdatasize;
-			mfleng = id->fleng;
+			csdataver = ind->mreq_csdataver;
+			chunkid = ind->mreq_chunkid;
+			version = ind->mreq_version;
+			csdata = ind->mreq_csdata;
+			csdatasize = ind->mreq_csdatasize;
+			mfleng = ind->fleng;
 			rdstatus = STATUS_OK;
 			canmodatime = 1;
 		} else {
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: readworker (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" ; indx: %"PRIu32" (get chunk data from master) mreq_time: %.6lf ; mreq_chindx: %"PRIu32" ; laststatus: %u ; flengisvalid: %u\n",monotonic_seconds(),rreq->offset,rreq->leng,inode,chindx,id->mreq_time,id->mreq_chindx,id->laststatus,id->flengisvalid);
+			fprintf(stderr,"%.6lf: readworker (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" ; indx: %"PRIu32" (get chunk data from master) mreq_time: %.6lf ; mreq_chindx: %"PRIu32" ; laststatus: %u ; flengisvalid: %u\n",monotonic_seconds(),rreq->offset,rreq->leng,inode,chindx,ind->mreq_time,ind->mreq_chindx,ind->laststatus,ind->flengisvalid);
 #endif
-			canmodatime = id->canmodatime;
+			canmodatime = ind->canmodatime;
 			if (canmodatime==2) {
-				id->canmodatime = 1;
+				ind->canmodatime = 1;
 			}
 			rdstatus = ERROR_ENOENT; // any error - means do master request
-			id->laststatus = 0;
+			ind->laststatus = 0;
 		}
 
-		zassert(pthread_mutex_unlock(&(id->lock)));
+		zassert(pthread_mutex_unlock(&(ind->lock)));
 //		start = monotonic_seconds();
 
 		// get chunk data from master
 		if (rdstatus!=STATUS_OK) {
 			rdstatus = fs_readchunk(inode,chindx,canmodatime,&csdataver,&mfleng,&chunkid,&version,&csdata,&csdatasize);
 			if (rdstatus==STATUS_OK) {
-				zassert(pthread_mutex_lock(&(id->lock)));
-				id->mreq_time = now;
-				id->mreq_chindx = chindx;
-				id->mreq_chunkid = chunkid;
-				id->mreq_version = version;
-				id->mreq_csdataver = csdataver;
-				id->mreq_csdatasize = csdatasize;
-				if (csdatasize > id->mreq_csdatabuffsize) {
-					free(id->mreq_csdata);
-					id->mreq_csdata = malloc(csdatasize+100);
-					passert(id->mreq_csdata);
-					id->mreq_csdatabuffsize = csdatasize+100;
+				zassert(pthread_mutex_lock(&(ind->lock)));
+				ind->mreq_time = now;
+				ind->mreq_chindx = chindx;
+				ind->mreq_chunkid = chunkid;
+				ind->mreq_version = version;
+				ind->mreq_csdataver = csdataver;
+				ind->mreq_csdatasize = csdatasize;
+				if (csdatasize > ind->mreq_csdatabuffsize) {
+					free(ind->mreq_csdata);
+					ind->mreq_csdata = malloc(csdatasize+100);
+					passert(ind->mreq_csdata);
+					ind->mreq_csdatabuffsize = csdatasize+100;
 				}
-				memcpy(id->mreq_csdata,csdata,csdatasize);
-				id->laststatus = 1;
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				memcpy(ind->mreq_csdata,csdata,csdatasize);
+				ind->laststatus = 1;
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 			}
 		}
-
+#endif
 		if (rdstatus!=STATUS_OK) {
 			syslog(LOG_WARNING,"file: %"PRIu32", index: %"PRIu32" - fs_readchunk returned status: %s",inode,chindx,mfsstrerr(rdstatus));
 			if (rdstatus==ERROR_ENOENT) {
@@ -640,11 +809,11 @@ void* read_worker(void *arg) {
 			} else if (rdstatus==ERROR_CHUNKLOST) {
 				read_job_end(rreq,ENXIO,0);
 			} else {
-				zassert(pthread_mutex_lock(&(id->lock)));
-				id->trycnt++;
-				trycnt = id->trycnt;
+				zassert(pthread_mutex_lock(&(ind->lock)));
+				ind->trycnt++;
+				trycnt = ind->trycnt;
 				if (trycnt>=maxretries) {
-					zassert(pthread_mutex_unlock(&(id->lock)));
+					zassert(pthread_mutex_unlock(&(ind->lock)));
 					if (rdstatus==ERROR_NOCHUNKSERVERS) {
 						read_job_end(rreq,ENOSPC,0);
 					} else if (rdstatus==ERROR_CSNOTPRESENT) {
@@ -654,7 +823,7 @@ void* read_worker(void *arg) {
 					}
 				} else {
 					rreq->mode = INQUEUE;
-					zassert(pthread_mutex_unlock(&(id->lock)));
+					zassert(pthread_mutex_unlock(&(ind->lock)));
 					read_delayed_enqueue(rreq,10000+((trycnt<30)?((trycnt-1)*300000):10000000));
 				}
 			}
@@ -664,12 +833,12 @@ void* read_worker(void *arg) {
 //		now = monotonic_seconds();
 //		fprintf(stderr,"fs_readchunk time: %.3lf\n",now-start);
 		if (chunkid==0 && version==0) { // empty chunk
-			zassert(pthread_mutex_lock(&(id->lock)));
-			id->fleng = mfleng;
-			id->flengisvalid = 1;
+			zassert(pthread_mutex_lock(&(ind->lock)));
+//			ind->fleng = mfleng;
+//			ind->flengisvalid = 1;
 			rreq->mode = FILLED;
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: readworker (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" ; mfleng: %"PRIu64" (empty chunk)\n",monotonic_seconds(),rreq->offset,rreq->leng,inode,id->fleng);
+			fprintf(stderr,"%.6lf: readworker (rreq: %"PRIu64":%"PRIu32") inode: %"PRIu32" ; mfleng: %"PRIu64" (empty chunk)\n",monotonic_seconds(),rreq->offset,rreq->leng,inode,ind->fleng);
 #endif
 			if (rreq->offset > mfleng) {
 				rreq->rleng = 0;
@@ -687,30 +856,31 @@ void* read_worker(void *arg) {
 				zassert(pthread_cond_broadcast(&(rreq->cond)));
 			}
 
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 			read_job_end(rreq,0,0);
 
 			continue;
 		}
 
+#if 0
 		if (csdata!=NULL && csdatasize>0) {
-			zassert(pthread_mutex_lock(&(id->lock))); // csdata may point to id->mreq_csdata
+			zassert(pthread_mutex_lock(&(ind->lock))); // csdata may point to ind->mreq_csdata
 			chainelements = csorder_sort(chain,csdataver,csdata,csdatasize,0);
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 		} else {
 			chainelements = 0;
 		}
-
-		if (csdata==NULL || csdatasize==0 || chainelements==0) {
+#endif
+		if (/*csdata==NULL || csdatasize==0 || */chainelements==0) {
 			syslog(LOG_WARNING,"file: %"PRIu32", index: %"PRIu32", chunk: %"PRIu64", version: %"PRIu32" - there are no valid copies",inode,chindx,chunkid,version);
-			zassert(pthread_mutex_lock(&(id->lock)));
-			id->trycnt+=6;
-			if (id->trycnt>=maxretries) {
-				zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			ind->trycnt+=6;
+			if (ind->trycnt>=maxretries) {
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				read_job_end(rreq,ENXIO,0);
 			} else {
 				rreq->mode = INQUEUE;
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				read_delayed_enqueue(rreq,60000000);
 			}
 			continue;
@@ -720,10 +890,10 @@ void* read_worker(void *arg) {
 		port = chain[0].port;
 		csver = chain[0].version;
 /*
-		if (id->lastchunkid==chunkid) {
-			if (id->laststatus==0) { // error occured
+		if (ind->lastchunkid==chunkid) {
+			if (ind->laststatus==0) { // error occured
 				for (i=0 ; i<chainelements ; i++) {
-					if (chain[i].ip != id->lastip || chain[i].port != id->lastport) {
+					if (chain[i].ip != ind->lastip || chain[i].port != ind->lastport) {
 						ip = chain[i].ip;
 						port = chain[i].port;
 						csver = chain[i].version;
@@ -732,7 +902,7 @@ void* read_worker(void *arg) {
 				}
 			} else { // ok
 				for (i=1 ; i<chainelements ; i++) {
-					if (chain[i].ip == id->lastip && chain[i].port == id->lastport) {
+					if (chain[i].ip == ind->lastip && chain[i].port == ind->lastport) {
 						ip = chain[i].ip;
 						port = chain[i].port;
 						csver = chain[i].version;
@@ -744,20 +914,20 @@ void* read_worker(void *arg) {
 */
 		if (ip || port) {
 			csdb_readinc(ip,port);
-//			id->lastchunkid = chunkid;
-//			id->lastip = ip;
-//			id->lastport = port;
+//			ind->lastchunkid = chunkid;
+//			ind->lastip = ip;
+//			ind->lastport = port;
 		} else {
 			syslog(LOG_WARNING,"file: %"PRIu32", index: %"PRIu32", chunk: %"PRIu64", version: %"PRIu32" - there are no valid copies (bad ip and/or port)",inode,chindx,chunkid,version);
-			zassert(pthread_mutex_lock(&(id->lock)));
-			id->trycnt+=6;
-			if (id->trycnt>=maxretries) {
-				zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			ind->trycnt+=6;
+			if (ind->trycnt>=maxretries) {
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				read_job_end(rreq,ENXIO,0);
 			} else {
 				rreq->mode = INQUEUE;
-				id->laststatus = 0;
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
+				read_invalidate_masterdata(inode,chindx);
 				read_delayed_enqueue(rreq,60000000);
 			}
 			continue;
@@ -799,16 +969,16 @@ void* read_worker(void *arg) {
 			}
 		}
 		if (fd<0) {
-			zassert(pthread_mutex_lock(&(id->lock)));
-			id->trycnt++;
-			trycnt = id->trycnt;
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			ind->trycnt++;
+			trycnt = ind->trycnt;
 			if (trycnt>=maxretries) {
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				read_job_end(rreq,EIO,0);
 			} else {
 				rreq->mode = INQUEUE;
-				id->laststatus = 0;
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
+				read_invalidate_masterdata(inode,chindx);
 				read_delayed_enqueue(rreq,10000+((trycnt<30)?((trycnt-1)*300000):10000000));
 			}
 			continue;
@@ -827,7 +997,7 @@ void* read_worker(void *arg) {
 		lastrcvd = 0.0;
 		lastsend = 0.0;
 
-		zassert(pthread_mutex_lock(&(id->lock)));
+		zassert(pthread_mutex_lock(&(ind->lock)));
 
 		currentpos = rreq->currentpos;
 #ifdef RDEBUG
@@ -836,12 +1006,12 @@ void* read_worker(void *arg) {
 		}
 #endif
 
-		id->fleng = mfleng;
-		id->flengisvalid = 1;
+		ind->fleng = mfleng;
+		ind->flengisvalid = 1;
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: readworker inode: %"PRIu32" ; mfleng: %"PRIu64"\n",monotonic_seconds(),inode,id->fleng);
+		fprintf(stderr,"%.6lf: readworker inode: %"PRIu32" ; mfleng: %"PRIu64"\n",monotonic_seconds(),inode,ind->fleng);
 #endif
-		zassert(pthread_mutex_unlock(&(id->lock)));
+		zassert(pthread_mutex_unlock(&(ind->lock)));
 
 		reccmd = 0; // makes gcc happy
 		recleng = 0; // makes gcc happy
@@ -849,15 +1019,15 @@ void* read_worker(void *arg) {
 		do {
 			now = monotonic_seconds();
 
-			zassert(pthread_mutex_lock(&(id->lock)));
+			zassert(pthread_mutex_lock(&(ind->lock)));
 
 #ifdef RDEBUG
 			fprintf(stderr,"%.6lf: readworker inode: %"PRIu32" ; rreq: %"PRIu64":%"PRIu32" ; currentpos: %"PRIu32"\n",monotonic_seconds(),inode,rreq->offset,rreq->leng,currentpos);
 #endif
 
 
-			if (id->flengisvalid) {
-				mfleng = id->fleng;
+			if (ind->flengisvalid) {
+				mfleng = ind->fleng;
 			}
 
 			if (reqsend && gotstatus) {
@@ -866,7 +1036,7 @@ void* read_worker(void *arg) {
 				if (rreq->waiting>0) {
 					zassert(pthread_cond_broadcast(&(rreq->cond)));
 				}
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				break;
 			}
 
@@ -880,7 +1050,7 @@ void* read_worker(void *arg) {
 					if (rreq) {
 						status = EIO;
 					}
-					zassert(pthread_mutex_unlock(&(id->lock)));
+					zassert(pthread_mutex_unlock(&(ind->lock)));
 					break;
 				}
 			}
@@ -891,7 +1061,7 @@ void* read_worker(void *arg) {
 #ifdef RDEBUG
 				fprintf(stderr,"%.6lf: readworker: current request not finished but busy timeout passed\n",monotonic_seconds());
 #endif
-				zassert(pthread_mutex_unlock(&(id->lock)));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
 				status = EINTR;
 				break;
 			}
@@ -927,13 +1097,13 @@ void* read_worker(void *arg) {
 					sent = 0;
 					reqsend = 1;
 					gotstatus = 1;
-					zassert(pthread_mutex_unlock(&(id->lock)));
+					zassert(pthread_mutex_unlock(&(ind->lock)));
 					continue;
 				}
 			}
 
 			rreq->waitingworker=1;
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 
 			if (tosend==0 && (now - lastsend > (CHUNKSERVER_ACTIVITY_TIMEOUT/2.0))) {
 				wptr = sendbuff;
@@ -950,9 +1120,9 @@ void* read_worker(void *arg) {
 						read_prepare_ip(csstrip,ip);
 						status = EIO;
 						syslog(LOG_WARNING,"file: %"PRIu32", index: %"PRIu32", chunk: %"PRIu64", version: %"PRIu32" - readworker: write to (%s:%"PRIu16") error: %s (received: %"PRIu32"/%"PRIu32"; try counter: %"PRIu32")",inode,chindx,chunkid,version,csstrip,port,strerr(errno),currentpos,rleng,trycnt+1);
-						zassert(pthread_mutex_lock(&(id->lock)));
+						zassert(pthread_mutex_lock(&(ind->lock)));
 						rreq->waitingworker=0;
-						zassert(pthread_mutex_unlock(&(id->lock)));
+						zassert(pthread_mutex_unlock(&(ind->lock)));
 						break;
 					} else {
 						i=0;
@@ -979,11 +1149,11 @@ void* read_worker(void *arg) {
 					break;
 				}
 			}
-			zassert(pthread_mutex_lock(&(id->lock)));
+			zassert(pthread_mutex_lock(&(ind->lock)));
 			rreq->waitingworker=0;
-			closing = (id->closing>0)?1:0;
+			closing = (ind->closing>0)?1:0;
 			mode = rreq->mode;
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 			if (pfd[1].revents&POLLIN) {    // used just to break poll - so just read all data from pipe to empty it
 #ifdef RDEBUG
 				fprintf(stderr,"%.6lf: readworker: %"PRIu32" woken up by pipe\n",monotonic_seconds(),inode);
@@ -1061,7 +1231,7 @@ void* read_worker(void *arg) {
 								status = EIO;
 								currentpos = 0; // start again from beginning
 								break;
-							} else if ((recleng-20) + currentpos > rreq->rleng) {
+							} else if ((recleng-20) + currentpos > rleng) {
 								syslog(LOG_WARNING,"readworker: got too long data packet from chunkserver (leng:%"PRIu32")",recleng);
 								status = EIO;
 								currentpos = 0; // start again from beginning
@@ -1148,8 +1318,8 @@ void* read_worker(void *arg) {
 								currentpos = 0; // start again from beginning
 								break;
 							}
-							if (currentpos != rreq->rleng) {
-								syslog(LOG_WARNING,"readworker: unexpected data block size (requested: %"PRIu32" / received: %"PRIu32")",rreq->rleng,currentpos);
+							if (currentpos != rleng) {
+								syslog(LOG_WARNING,"readworker: unexpected data block size (requested: %"PRIu32" / received: %"PRIu32")",rleng,currentpos);
 								status = EIO;
 								currentpos = 0; // start again from beginning
 								break;
@@ -1206,20 +1376,21 @@ void* read_worker(void *arg) {
 		syslog(LOG_NOTICE,"worker %lu received data from chunk %016"PRIX64"_%08"PRIX32", bw: %.6lfMB/s ( %"PRIu32" B / %.6lf s )",(unsigned long)arg,chunkid,version,(double)bytesreceived/workingtime,bytesreceived,workingtime);
 #endif
 
-		zassert(pthread_mutex_lock(&(id->lock)));
+		zassert(pthread_mutex_lock(&(ind->lock)));
 		rreq->currentpos = currentpos;
 		if (status!=0) {
-			id->laststatus = 0;
-			id->trycnt++;
-			if (id->trycnt>=maxretries) {
-				zassert(pthread_mutex_unlock(&(id->lock)));
+			ind->trycnt++;
+			if (ind->trycnt>=maxretries) {
+				zassert(pthread_mutex_unlock(&(ind->lock)));
+				read_invalidate_masterdata(inode,chindx);
 				read_job_end(rreq,status,0);
 			} else {
-				zassert(pthread_mutex_unlock(&(id->lock)));
-				read_job_end(rreq,0,10000+((id->trycnt<30)?((id->trycnt-1)*300000):10000000));
+				zassert(pthread_mutex_unlock(&(ind->lock)));
+				read_invalidate_masterdata(inode,chindx);
+				read_job_end(rreq,0,10000+((ind->trycnt<30)?((ind->trycnt-1)*300000):10000000));
 			}
 		} else {
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 			read_job_end(rreq,0,0);
 		}
 	}
@@ -1241,14 +1412,21 @@ void read_data_init (uint64_t readaheadsize,uint32_t readaheadleng,uint32_t read
 #ifndef HAVE___SYNC_OP_AND_FETCH
 	zassert(pthread_mutex_init(&buffsizelock,NULL));
 #endif
+	zassert(pthread_mutex_init(&mreq_cache_lock,NULL));
 	zassert(pthread_mutex_init(&glock,NULL));
 	zassert(pthread_cond_init(&worker_term_cond,NULL));
 	worker_term_waiting = 0;
 
-	idhash = malloc(sizeof(inodedata*)*IDHASHSIZE);
-	passert(idhash);
+	mreq_cache = malloc(sizeof(mreqcache*)*MREQ_CACHE_SIZE);
+	passert(mreq_cache);
+	for (i=0 ; i<MREQ_CACHE_SIZE ; i++) {
+		mreq_cache[i]=NULL;
+	}
+
+	indhash = malloc(sizeof(inodedata*)*IDHASHSIZE);
+	passert(indhash);
 	for (i=0 ; i<IDHASHSIZE ; i++) {
-		idhash[i]=NULL;
+		indhash[i]=NULL;
 	}
 
 //	dqueue = queue_new(0);
@@ -1283,7 +1461,8 @@ void read_data_init (uint64_t readaheadsize,uint32_t readaheadleng,uint32_t read
 
 void read_data_term(void) {
 	uint32_t i;
-	inodedata *id,*idn;
+	inodedata *ind,*indn;
+	mreqcache *mrc,*mrcn;
 
 //	queue_close(dqueue);
 	queue_close(jqueue);
@@ -1298,23 +1477,35 @@ void read_data_term(void) {
 	queue_delete(jqueue);
 	zassert(pthread_mutex_lock(&glock));
 	for (i=0 ; i<IDHASHSIZE ; i++) {
-		for (id = idhash[i] ; id ; id = idn) {
-			idn = id->next;
-			zassert(pthread_mutex_lock(&(id->lock)));
-			zassert(pthread_mutex_unlock(&(id->lock)));
-			zassert(pthread_cond_destroy(&(id->closecond)));
-			zassert(pthread_mutex_destroy(&(id->lock)));
-			free(id->mreq_csdata);
-			free(id);
+		for (ind = indhash[i] ; ind ; ind = indn) {
+			indn = ind->next;
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
+			zassert(pthread_cond_destroy(&(ind->closecond)));
+			zassert(pthread_mutex_destroy(&(ind->lock)));
+//			free(ind->mreq_csdata);
+			free(ind);
 		}
 	}
-	free(idhash);
+	free(indhash);
 	zassert(pthread_mutex_unlock(&glock));
+	zassert(pthread_mutex_lock(&mreq_cache_lock));
+	for (i=0 ; i<MREQ_CACHE_SIZE ; i++) {
+		for (mrc = mreq_cache[i] ; mrc ; mrc = mrcn) {
+			mrcn = mrc->next;
+			zassert(pthread_cond_destroy(&(mrc->reqcond)));
+			free(mrc->csdata);
+			free(mrc);
+		}
+	}
+	free(mreq_cache);
+	zassert(pthread_mutex_unlock(&mreq_cache_lock));
 	//        free(cacheblocks);
 	//        pthread_cond_destroy(&fcbcond);
 	zassert(pthread_attr_destroy(&worker_thattr));
 	zassert(pthread_cond_destroy(&worker_term_cond));
         zassert(pthread_mutex_destroy(&glock));
+        zassert(pthread_mutex_destroy(&mreq_cache_lock));
 #ifndef HAVE___SYNC_OP_AND_FETCH
 	zassert(pthread_mutex_destroy(&buffsizelock));
 #endif
@@ -1322,7 +1513,7 @@ void read_data_term(void) {
 
 
 
-rrequest* read_new_request(inodedata *id,uint64_t *offset,uint64_t blockend) {
+rrequest* read_new_request(inodedata *ind,uint64_t *offset,uint64_t blockend) {
 	uint64_t chunkoffset;
 	uint64_t chunkend;
 	uint32_t chunkleng;
@@ -1351,12 +1542,13 @@ rrequest* read_new_request(inodedata *id,uint64_t *offset,uint64_t blockend) {
 	rreq = malloc(sizeof(rrequest));
 	passert(rreq);
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: inode: %"PRIu32" - new request: chindx: %"PRIu32" chunkoffset: %"PRIu64" chunkleng: %"PRIu32"\n",monotonic_seconds(),id->inode,chindx,chunkoffset,chunkleng);
+	fprintf(stderr,"%.6lf: inode: %"PRIu32" - new request: chindx: %"PRIu32" chunkoffset: %"PRIu64" chunkleng: %"PRIu32"\n",monotonic_seconds(),ind->inode,chindx,chunkoffset,chunkleng);
 #endif
-	rreq->ind = id;
+	rreq->ind = ind;
 	rreq->pipe[0] = pfd[0];
 	rreq->pipe[1] = pfd[1];
 	rreq->modified = monotonic_seconds();
+	rreq->waitingworker = 0;
 	rreq->offset = chunkoffset;
 	rreq->leng = chunkleng;
 	rreq->chindx = chindx;
@@ -1372,15 +1564,15 @@ rrequest* read_new_request(inodedata *id,uint64_t *offset,uint64_t blockend) {
 	passert(rreq->data);
 	rreq->waiting = 0;
 	zassert(pthread_cond_init(&(rreq->cond),NULL));
-	if (id->inqueue<MAXREQINQUEUE) {
+	if (ind->inqueue<MAXREQINQUEUE) {
 		rreq->mode = INQUEUE;
 		read_enqueue(rreq);
-		id->inqueue++;
+		ind->inqueue++;
 	}
 	rreq->next = NULL;
-	rreq->prev = id->reqtail;
-	*(id->reqtail) = rreq;
-	id->reqtail = &(rreq->next);
+	rreq->prev = ind->reqtail;
+	*(ind->reqtail) = rreq;
+	ind->reqtail = &(rreq->next);
 #ifdef HAVE___SYNC_OP_AND_FETCH
 	__sync_add_and_fetch(&reqbufftotalsize,chunkleng);
 #else
@@ -1436,7 +1628,7 @@ static inline void read_rreq_not_needed(rrequest *rreq) {
 
 // return list of rreq
 int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct iovec **iov,uint32_t *iovcnt) {
-	inodedata *id = (inodedata*)vid;
+	inodedata *ind = (inodedata*)vid;
 	rrequest *rreq,*rreqn;
 	rlist *rl,*rhead,**rtail;
 	uint64_t rbuffsize;
@@ -1446,9 +1638,9 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 	int status;
 	double now;
 
-	zassert(pthread_mutex_lock(&(id->lock)));
+	zassert(pthread_mutex_lock(&(ind->lock)));
 
-	id->canmodatime = 2;
+	ind->canmodatime = 2;
 
 	*vrhead = NULL;
 	*iov = NULL;
@@ -1456,7 +1648,7 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 	cnt = 0;
 
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" id->status: %d id->closewaiting: %"PRIu16"\n",monotonic_seconds(),id->inode,id->status,id->closewaiting);
+	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" ind->status: %d ind->closewaiting: %"PRIu16"\n",monotonic_seconds(),ind->inode,ind->status,ind->closewaiting);
 #endif
 
 #ifdef HAVE___SYNC_OP_AND_FETCH
@@ -1467,25 +1659,31 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 	zassert(pthread_mutex_unlock(&buffsizelock));
 #endif
 
-	if (id->status==0 && id->closing==0) {
-		if (offset==id->lastoffset) {
+	if (ind->status==0 && ind->closing==0) {
+		if (offset==ind->lastoffset) {
 			if (offset==0) { // begin with read-ahead turned on
-				id->readahead = 1;
-				id->seqdata = 0;
-			} else if (id->readahead<READAHEAD_MAX) {
-				if (id->seqdata>=readahead_trigger) {
-					id->readahead++;
-					id->seqdata = 0;
+				ind->readahead = 1;
+				ind->seqdata = 0;
+			} else if (ind->readahead<READAHEAD_MAX) {
+				if (ind->seqdata>=readahead_trigger) {
+					ind->readahead++;
+					ind->seqdata = 0;
 				}
 			}
 		} else {
-			if (offset+(readahead/2) < id->lastoffset || id->lastoffset+(readahead/2) < offset) {
-				id->readahead = 0;
-				id->seqdata = 0;
+			if (offset+(readahead/2) < ind->lastoffset || ind->lastoffset+(readahead/2) < offset) {
+				if (ind->readahead>0) {
+					ind->readahead--;
+				}
+				ind->seqdata = 0;
 			}
 		}
+		if (ind->readahead > 1 && reqbufftotalsize >= (maxreadaheadsize / 2) + ((maxreadaheadsize * 1) / (ind->readahead * 2))) {
+			ind->readahead--;
+			ind->seqdata = 0;
+		}
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" seqdata: %"PRIu32" offset: %"PRIu64" id->lastoffset: %"PRIu64" id->readahead: %u reqbufftotalsize:%"PRIu64"\n",monotonic_seconds(),id->inode,id->seqdata,offset,id->lastoffset,id->readahead,rbuffsize);
+		fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" seqdata: %"PRIu32" offset: %"PRIu64" ind->lastoffset: %"PRIu64" ind->readahead: %u reqbufftotalsize:%"PRIu64"\n",monotonic_seconds(),ind->inode,ind->seqdata,offset,ind->lastoffset,ind->readahead,rbuffsize);
 #endif
 
 		// prepare requests
@@ -1494,21 +1692,21 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 		lastbyte = offset + (*size);
 		rhead = NULL;
 		rtail = &rhead;
-		rreq = id->reqhead;
+		rreq = ind->reqhead;
 		now = monotonic_seconds();
 		while (rreq && lastbyte>firstbyte) {
 			rreqn = rreq->next;
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" , rreq->modified:%.6lf , rreq->offset: %"PRIu64" , rreq->leng: %"PRIu32" , firstbyte: %"PRIu64" , lastbyte: %"PRIu64"\n",monotonic_seconds(),id->inode,rreq->modified,rreq->offset,rreq->leng,firstbyte,lastbyte);
+			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" , rreq->modified:%.6lf , rreq->offset: %"PRIu64" , rreq->leng: %"PRIu32" , firstbyte: %"PRIu64" , lastbyte: %"PRIu64"\n",monotonic_seconds(),ind->inode,rreq->modified,rreq->offset,rreq->leng,firstbyte,lastbyte);
 #endif
 			if (rreq->modified+BUFFER_VALIDITY_TIMEOUT<now) { // buffer too old
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" data too old: free rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),id->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" data too old: free rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),ind->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 				read_rreq_not_needed(rreq);
 			} else if (firstbyte < rreq->offset || firstbyte >= rreq->offset+rreq->leng) { // all not sequential read cases
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 0: free rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),id->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 0: free rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),ind->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 				// rreq:      |---------|
 				// read: |--|
@@ -1518,7 +1716,7 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 				read_rreq_not_needed(rreq);
 			} else if (lastbyte <= rreq->offset+rreq->leng) {
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 1: use rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),id->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 1: use rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),ind->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 				// rreq: |---------|
 				// read:    |---|
@@ -1531,34 +1729,32 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 				*rtail = rl;
 				rtail = &(rl->next);
 				rreq->lcnt++;
-				if (id->readahead && id->flengisvalid) {
+				if (ind->readahead && ind->flengisvalid) {
 					if (lastbyte > rreq->offset) {
 						// request next block of data
 						if (rreq->next==NULL && rbuffsize<maxreadaheadsize) {
 							uint64_t blockstart,blockend;
 							blockstart = rreq->offset+rreq->leng;
-							blockend = blockstart + (readahead * (1<<((id->readahead-1)*2)))/2;
+							blockend = blockstart + (readahead * (1<<((ind->readahead-1)*2)));
 #ifdef RDEBUG
-							fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (middle of existing block) add new read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),id->inode,blockstart,blockend-blockstart);
+							fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (middle of existing block) add new read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),ind->inode,blockstart,blockend-blockstart);
 #endif
-							if (blockend<=id->fleng) {
-								rreq->next = read_new_request(id,&blockstart,blockend);
-							} else if (blockstart<id->fleng) {
-								rreq->next = read_new_request(id,&blockstart,id->fleng);
+							if (blockend<=ind->fleng) {
+								read_new_request(ind,&blockstart,blockend);
+							} else if (blockstart<ind->fleng) {
+								read_new_request(ind,&blockstart,ind->fleng);
 							}
-						}
-						// and another one if necessary
-						if (rreq->next!=NULL && rreq->next->next==NULL && rbuffsize<maxreadaheadsize) {
-							uint64_t blockstart,blockend;
-							blockstart = rreq->next->offset+rreq->next->leng;
-							blockend = blockstart + (readahead * (1<<((id->readahead-1)*2)))/2;
+							// and another one if necessary
+							if ((blockstart % MFSCHUNKSIZE) == 0 && rreq->next!=NULL && rreq->next->next==NULL && rbuffsize<maxreadaheadsize) {
+								blockend = blockstart + (readahead * (1<<((ind->readahead-1)*2)));
 #ifdef RDEBUG
-							fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (middle of existing block) add new extra read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),id->inode,blockstart,blockend-blockstart);
+								fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (middle of existing block) add new extra read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),ind->inode,blockstart,blockend-blockstart);
 #endif
-							if (blockend<=id->fleng) {
-								rreq->next->next = read_new_request(id,&blockstart,blockend);
-							} else if (blockstart<id->fleng) {
-								rreq->next->next = read_new_request(id,&blockstart,id->fleng);
+								if (blockend<=ind->fleng) {
+									read_new_request(ind,&blockstart,blockend);
+								} else if (blockstart<ind->fleng) {
+									read_new_request(ind,&blockstart,ind->fleng);
+								}
 							}
 						}
 					}
@@ -1567,7 +1763,7 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 				firstbyte = 0;
 			} else {
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 2: use tail of rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),id->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" case 2: use tail of rreq (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),ind->inode,rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 				// rreq: |---------|
 				// read:         |---|
@@ -1586,9 +1782,9 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 		}
 		while (lastbyte>firstbyte) {
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" add new rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),id->inode,firstbyte,(lastbyte-firstbyte));
+			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" add new rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),ind->inode,firstbyte,(lastbyte-firstbyte));
 #endif
-			rreq = read_new_request(id,&firstbyte,lastbyte);
+			rreq = read_new_request(ind,&firstbyte,lastbyte);
 			rl = malloc(sizeof(rlist));
 			passert(rl);
 			rl->rreq = rreq;
@@ -1598,16 +1794,16 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 			*rtail = rl;
 			rtail = &(rl->next);
 			rreq->lcnt++;
-			if (lastbyte==firstbyte && id->readahead && id->flengisvalid && rbuffsize<maxreadaheadsize) {
+			if (lastbyte==firstbyte && ind->readahead && ind->flengisvalid && rbuffsize<maxreadaheadsize) {
 				uint64_t blockend;
-				blockend = lastbyte + (readahead * (1<<((id->readahead-1)*2)))/2;
+				blockend = lastbyte + (readahead * (1<<((ind->readahead-1)*2)))/2;
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (after new block) add new read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),id->inode,lastbyte,blockend-lastbyte);
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" (after new block) add new read-ahead rreq (%"PRIu64":%"PRId64")\n",monotonic_seconds(),ind->inode,lastbyte,blockend-lastbyte);
 #endif
-				if (blockend<=id->fleng) {
-					(void)read_new_request(id,&firstbyte,blockend);
-				} else if (lastbyte<id->fleng) {
-					(void)read_new_request(id,&firstbyte,id->fleng);
+				if (blockend<=ind->fleng) {
+					(void)read_new_request(ind,&firstbyte,blockend);
+				} else if (lastbyte<ind->fleng) {
+					(void)read_new_request(ind,&firstbyte,ind->fleng);
 				}
 			}
 		}
@@ -1617,17 +1813,17 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 		cnt = 0;
 		*size = 0;
 		for (rl = rhead ; rl ; rl=rl->next) {
-			while (rl->rreq->mode!=READY && rl->rreq->mode!=FILLED && id->status==0 && id->closing==0) {
+			while (rl->rreq->mode!=READY && rl->rreq->mode!=FILLED && ind->status==0 && ind->closing==0) {
 				rl->rreq->waiting++;
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" wait for data: %"PRIu64":%"PRIu32"\n",monotonic_seconds(),id->inode,rl->rreq->offset,rl->rreq->leng);
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" wait for data: %"PRIu64":%"PRIu32"\n",monotonic_seconds(),ind->inode,rl->rreq->offset,rl->rreq->leng);
 #endif
-				zassert(pthread_cond_wait(&(rl->rreq->cond),&(id->lock)));
+				zassert(pthread_cond_wait(&(rl->rreq->cond),&(ind->lock)));
 				rl->rreq->waiting--;
 			}
-			if (id->status==0) {
+			if (ind->status==0) {
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" block %"PRIu64":%"PRIu32"(%"PRIu32") has been read\n",monotonic_seconds(),id->inode,rl->rreq->offset,rl->rreq->rleng,rl->rreq->leng);
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" block %"PRIu64":%"PRIu32"(%"PRIu32") has been read\n",monotonic_seconds(),ind->inode,rl->rreq->offset,rl->rreq->rleng,rl->rreq->leng);
 #endif
 				if (rl->rreq->rleng < rl->rreq->leng) {
 					if (rl->rreq->rleng > rl->offsetadd) {
@@ -1644,20 +1840,20 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 				}
 			} else {
 #ifdef RDEBUG
-				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" error reading block: %"PRIu64":%"PRIu32"\n",monotonic_seconds(),id->inode,rl->rreq->offset,rl->rreq->leng);
+				fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" error reading block: %"PRIu64":%"PRIu32"\n",monotonic_seconds(),ind->inode,rl->rreq->offset,rl->rreq->leng);
 #endif
 				break;
 			}
 #ifdef RDEBUG
-			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" size: %"PRIu32" ; cnt: %u\n",monotonic_seconds(),id->inode,*size,cnt);
+			fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" size: %"PRIu32" ; cnt: %u\n",monotonic_seconds(),ind->inode,*size,cnt);
 #endif
 		}
 	}
 
-	if (id->status==0 && id->closing==0 && cnt>0) {
-		id->lastoffset = offset + (*size);
-		if (id->readahead<READAHEAD_MAX) {
-			id->seqdata += (*size);
+	if (ind->status==0 && ind->closing==0 && cnt>0) {
+		ind->lastoffset = offset + (*size);
+		if (ind->readahead<READAHEAD_MAX) {
+			ind->seqdata += (*size);
 		}
 		*iov = malloc(sizeof(struct iovec)*cnt);
 		passert(*iov);
@@ -1682,24 +1878,24 @@ int read_data(void *vid, uint64_t offset, uint32_t *size, void **vrhead,struct i
 		*iov = NULL;
 	}
 
-	status = id->status;
+	status = ind->status;
 
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" id->status: %d iovcnt: %"PRIu32" iovec: %p\n",monotonic_seconds(),id->inode,id->status,*iovcnt,(void*)(*iov));
+	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" ind->status: %d iovcnt: %"PRIu32" iovec: %p\n",monotonic_seconds(),ind->inode,ind->status,*iovcnt,(void*)(*iov));
 #endif
 
-	zassert(pthread_mutex_unlock(&(id->lock)));
+	zassert(pthread_mutex_unlock(&(ind->lock)));
 	return status;
 }
 
 void read_data_free_buff(void *vid,void *vrhead,struct iovec *iov) {
-	inodedata *id = (inodedata*)vid;
+	inodedata *ind = (inodedata*)vid;
 	rlist *rl,*rln;
 	rrequest *rreq;
 	rl = (rlist*)vrhead;
-	zassert(pthread_mutex_lock(&(id->lock)));
+	zassert(pthread_mutex_lock(&(ind->lock)));
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" inode_structure: %p vrhead: %p iovec: %p\n",monotonic_seconds(),id->inode,(void*)id,(void*)vrhead,(void*)iov);
+	fprintf(stderr,"%.6lf: read_data: inode: %"PRIu32" inode_structure: %p vrhead: %p iovec: %p\n",monotonic_seconds(),ind->inode,(void*)ind,(void*)vrhead,(void*)iov);
 #endif
 	while (rl) {
 		rln = rl->next;
@@ -1710,7 +1906,7 @@ void read_data_free_buff(void *vid,void *vrhead,struct iovec *iov) {
 			if (rreq->next) {
 				rreq->next->prev = rreq->prev;
 			} else {
-				id->reqtail = rreq->prev;
+				ind->reqtail = rreq->prev;
 			}
 #ifdef HAVE___SYNC_OP_AND_FETCH
 			__sync_sub_and_fetch(&reqbufftotalsize,rreq->leng);
@@ -1727,18 +1923,18 @@ void read_data_free_buff(void *vid,void *vrhead,struct iovec *iov) {
 		free(rl);
 		rl = rln;
 	}
-	if (id->reqhead==NULL && id->closewaiting>0) {
-		zassert(pthread_cond_broadcast(&(id->closecond)));
+	if (ind->reqhead==NULL && ind->closewaiting>0) {
+		zassert(pthread_cond_broadcast(&(ind->closecond)));
 	}
 	if (iov) {
 		free(iov);
 	}
-	zassert(pthread_mutex_unlock(&(id->lock)));
+	zassert(pthread_mutex_unlock(&(ind->lock)));
 }
 
 void read_inode_dirty_region(uint32_t inode,uint64_t offset,uint32_t size,const char *buff) {
-	uint32_t idh = IDHASH(inode);
-	inodedata *id;
+	uint32_t indh = IDHASH(inode);
+	inodedata *ind;
 	rrequest *rreq,*rreqn;
 //	int clearedbuff = 0;
 
@@ -1746,10 +1942,10 @@ void read_inode_dirty_region(uint32_t inode,uint64_t offset,uint32_t size,const 
 	fprintf(stderr,"%.6lf: read_inode_dirty_region: inode: %"PRIu32" set dirty region: %"PRIu64":%"PRIu32"\n",monotonic_seconds(),inode,offset,size);
 #endif
 	zassert(pthread_mutex_lock(&glock));
-	for (id = idhash[idh] ; id ; id=id->next) {
-		if (id->inode == inode) {
-			zassert(pthread_mutex_lock(&(id->lock)));
-			for (rreq = id->reqhead ; rreq ; rreq=rreqn) {
+	for (ind = indhash[indh] ; ind ; ind=ind->next) {
+		if (ind->inode == inode) {
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			for (rreq = ind->reqhead ; rreq ; rreq=rreqn) {
 				rreqn = rreq->next;
 #ifdef RDEBUG
 				fprintf(stderr,"%.6lf: read_inode_dirty_region: rreq (before): (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
@@ -1828,25 +2024,25 @@ void read_inode_dirty_region(uint32_t inode,uint64_t offset,uint32_t size,const 
 				}
 #endif
 			}
-			if (id->flengisvalid && offset+size>id->fleng) {
-				id->fleng = offset+size;
+			if (ind->flengisvalid && offset+size>ind->fleng) {
+				ind->fleng = offset+size;
 			}
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 		}
 	}
 	zassert(pthread_mutex_unlock(&glock));
 }
 
 void read_inode_dont_modify_atime(uint32_t inode) {
-	uint32_t idh = IDHASH(inode);
-	inodedata *id;
+	uint32_t indh = IDHASH(inode);
+	inodedata *ind;
 
 	zassert(pthread_mutex_lock(&glock));
-	for (id = idhash[idh] ; id ; id=id->next) {
-		if (id->inode == inode) {
-			zassert(pthread_mutex_lock(&(id->lock)));
-			id->canmodatime = 0;
-			zassert(pthread_mutex_unlock(&(id->lock)));
+	for (ind = indhash[indh] ; ind ; ind=ind->next) {
+		if (ind->inode == inode) {
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			ind->canmodatime = 0;
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 		}
 	}
 	zassert(pthread_mutex_unlock(&glock));
@@ -1854,24 +2050,24 @@ void read_inode_dont_modify_atime(uint32_t inode) {
 
 // void read_inode_ops(uint32_t inode) {
 void read_inode_set_length(uint32_t inode,uint64_t newlength,uint8_t active) {
-	uint32_t idh = IDHASH(inode);
-	inodedata *id;
+	uint32_t indh = IDHASH(inode);
+	inodedata *ind;
 	rrequest *rreq,*rreqn;
 
 #ifdef RDEBUG
 	fprintf(stderr,"%.6lf: read_inode_set_length: inode: %"PRIu32" set length: %"PRIu64"\n",monotonic_seconds(),inode,newlength);
 #endif
 	zassert(pthread_mutex_lock(&glock));
-	for (id = idhash[idh] ; id ; id=id->next) {
-		if (id->inode == inode) {
-			zassert(pthread_mutex_lock(&(id->lock)));
-			for (rreq = id->reqhead ; rreq ; rreq=rreqn) {
+	for (ind = indhash[indh] ; ind ; ind=ind->next) {
+		if (ind->inode == inode) {
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			for (rreq = ind->reqhead ; rreq ; rreq=rreqn) {
 				rreqn = rreq->next;
 #ifdef RDEBUG
 				fprintf(stderr,"%.6lf: read_inode_set_length: rreq (before): (%"PRIu64":%"PRIu32" ; lcnt:%u ; mode:%s)\n",monotonic_seconds(),rreq->offset,rreq->leng,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 				if (rreq->mode!=FREE) {
-					if (rreq->mode==READY || rreq->mode==FILLED) {
+					if (rreq->mode==READY) {
 						if (active) {
 							if (newlength < rreq->offset + rreq->rleng) {
 								if (newlength < rreq->offset) {
@@ -1901,12 +2097,12 @@ void read_inode_set_length(uint32_t inode,uint64_t newlength,uint8_t active) {
 								}
 							}
 						} else {
-							if (rreq->lcnt==0 && rreq->mode!=INQUEUE && rreq->mode!=BUSY && rreq->mode!=REFRESH && rreq->mode!=BREAK && rreq->mode!=FILLED) { // nobody wants it anymore, so delete it
+							if (rreq->lcnt==0) { // nobody wants it anymore, so delete it
 								*(rreq->prev) = rreq->next;
 								if (rreq->next) {
 									rreq->next->prev = rreq->prev;
 								} else {
-									id->reqtail = rreq->prev;
+									ind->reqtail = rreq->prev;
 								}
 #ifdef HAVE___SYNC_OP_AND_FETCH
 								__sync_sub_and_fetch(&reqbufftotalsize,rreq->leng);
@@ -1922,14 +2118,14 @@ void read_inode_set_length(uint32_t inode,uint64_t newlength,uint8_t active) {
 								rreq = NULL;
 							} else { // somebody wants it, so clear it
 								rreq->mode = NEW;
-								if (id->inqueue<MAXREQINQUEUE) {
+								if (ind->inqueue<MAXREQINQUEUE) {
 									rreq->mode = INQUEUE;
 									read_enqueue(rreq);
-									id->inqueue++;
+									ind->inqueue++;
 								}
 							}
 						}
-					} else if (rreq->mode==BUSY) {
+					} else if (rreq->mode==BUSY || rreq->mode==FILLED) {
 #ifdef RDEBUG
 						fprintf(stderr,"%.6lf: read_inode_set_length: block is busy - refresh\n",monotonic_seconds());
 #endif
@@ -1950,86 +2146,86 @@ void read_inode_set_length(uint32_t inode,uint64_t newlength,uint8_t active) {
 				}
 #endif
 			}
-			id->fleng = newlength;
-			id->flengisvalid = 1;
-			zassert(pthread_mutex_unlock(&(id->lock)));
+			ind->fleng = newlength;
+			ind->flengisvalid = 1;
+			zassert(pthread_mutex_unlock(&(ind->lock)));
 		}
 	}
 	zassert(pthread_mutex_unlock(&glock));
 }
 
 void* read_data_new(uint32_t inode) {
-	uint32_t idh = IDHASH(inode);
-	inodedata *id;
+	uint32_t indh = IDHASH(inode);
+	inodedata *ind;
 
 	zassert(pthread_mutex_lock(&glock));
 
-	id = malloc(sizeof(inodedata));
-	passert(id);
-	id->inode = inode;
-	id->flengisvalid = 0;
-	id->seqdata = 0;
-	id->fleng = 0;
-	id->status = 0;
-	id->trycnt = 0;
-	id->inqueue = 0;
-	id->canmodatime = 1;
-	id->readahead = 0;
-	id->lastoffset = 0;
-	id->closewaiting = 0;
-	id->closing = 0;
-	id->mreq_time = 0.0;
-	id->mreq_chindx = 0xFFFFFFFF;
-	id->mreq_chunkid = 0;
-	id->mreq_version = 0;
-	id->mreq_csdataver = 0;
-	id->mreq_csdatasize = 0;
-	id->mreq_csdata = malloc(256);
-	passert(id->mreq_csdata);
-	id->mreq_csdatabuffsize = 256;
-//	id->lastip = 0;
-//	id->lastport = 0;
-	id->laststatus = 0;
-	zassert(pthread_cond_init(&(id->closecond),NULL));
-	zassert(pthread_mutex_init(&(id->lock),NULL));
-	id->reqhead = NULL;
-	id->reqtail = &(id->reqhead);
-	id->next = idhash[idh];
-	idhash[idh] = id;
+	ind = malloc(sizeof(inodedata));
+	passert(ind);
+	ind->inode = inode;
+	ind->flengisvalid = 0;
+	ind->seqdata = 0;
+	ind->fleng = 0;
+	ind->status = 0;
+	ind->trycnt = 0;
+	ind->inqueue = 0;
+	ind->canmodatime = 1;
+	ind->readahead = 0;
+	ind->lastoffset = 0;
+	ind->closewaiting = 0;
+	ind->closing = 0;
+//	ind->mreq_time = 0.0;
+//	ind->mreq_chindx = 0xFFFFFFFF;
+//	ind->mreq_chunkid = 0;
+//	ind->mreq_version = 0;
+//	ind->mreq_csdataver = 0;
+//	ind->mreq_csdatasize = 0;
+//	ind->mreq_csdata = malloc(256);
+//	passert(ind->mreq_csdata);
+//	ind->mreq_csdatabuffsize = 256;
+//	ind->laststatus = 0;
+	zassert(pthread_cond_init(&(ind->closecond),NULL));
+	zassert(pthread_mutex_init(&(ind->lock),NULL));
+	ind->reqhead = NULL;
+	ind->reqtail = &(ind->reqhead);
+	ind->next = indhash[indh];
+	indhash[indh] = ind;
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: opening: %"PRIu32" ; inode_structure: %p\n",monotonic_seconds(),inode,(void*)id);
-//	read_data_hexdump((uint8_t*)id,sizeof(inodedata));
+	fprintf(stderr,"%.6lf: opening: %"PRIu32" ; inode_structure: %p\n",monotonic_seconds(),inode,(void*)ind);
+//	read_data_hexdump((uint8_t*)ind,sizeof(inodedata));
 #endif
 	zassert(pthread_mutex_unlock(&glock));
-	return id;
+	return ind;
 }
 
 void read_data_end(void *vid) {
-	inodedata *id,**idp;
+	inodedata *ind,**indp;
 	rrequest *rreq,*rreqn;
-	inodedata *rid = (inodedata*)vid;
-	uint32_t idh = IDHASH(rid->inode);
+	uint32_t indh;
+
+	ind = (inodedata*)vid;
+	indh = IDHASH(ind->inode);
 
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; inode_structure: %p\n",monotonic_seconds(),rid->inode,(void*)rid);
-//	read_data_hexdump((uint8_t*)rid,sizeof(inodedata));
+	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; inode_structure: %p\n",monotonic_seconds(),ind->inode,(void*)ind);
+//	read_data_hexdump((uint8_t*)ind,sizeof(inodedata));
 #endif
-	zassert(pthread_mutex_lock(&(rid->lock)));
+	zassert(pthread_mutex_lock(&(ind->lock)));
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; cleaning req list\n",monotonic_seconds(),rid->inode);
+	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; cleaning req list\n",monotonic_seconds(),ind->inode);
 #endif
-	rid->closing = 1;
-	for (rreq = rid->reqhead ; rreq ; rreq=rreqn) {
+	ind->closing = 1;
+	for (rreq = ind->reqhead ; rreq ; rreq=rreqn) {
 		rreqn = rreq->next;
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: closing: %"PRIu32" ; rreq: lcnt: %u ; mode: %s\n",monotonic_seconds(),rid->inode,rreq->lcnt,read_data_modename(rreq->mode));
+		fprintf(stderr,"%.6lf: closing: %"PRIu32" ; rreq: lcnt: %u ; mode: %s\n",monotonic_seconds(),ind->inode,rreq->lcnt,read_data_modename(rreq->mode));
 #endif
 		if (rreq->lcnt==0 && rreq->mode!=INQUEUE && rreq->mode!=BUSY && rreq->mode!=REFRESH && rreq->mode!=BREAK && rreq->mode!=FILLED) {
 			*(rreq->prev) = rreq->next;
 			if (rreq->next) {
 				rreq->next->prev = rreq->prev;
 			} else {
-				rid->reqtail = rreq->prev;
+				ind->reqtail = rreq->prev;
 			}
 #ifdef HAVE___SYNC_OP_AND_FETCH
 			__sync_sub_and_fetch(&reqbufftotalsize,rreq->leng);
@@ -2044,42 +2240,42 @@ void read_data_end(void *vid) {
 			free(rreq);
 		}
 	}
-	while (rid->reqhead!=NULL) {
+	while (ind->reqhead!=NULL) {
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: closing: %"PRIu32" ; reqhead: %s ; inqueue: %u\n",monotonic_seconds(),rid->inode,rid->reqhead?"NOT NULL":"NULL",rid->inqueue);
+		fprintf(stderr,"%.6lf: closing: %"PRIu32" ; reqhead: %s ; inqueue: %u\n",monotonic_seconds(),ind->inode,ind->reqhead?"NOT NULL":"NULL",ind->inqueue);
 #endif
-		rid->closewaiting++;
-		if (rid->reqhead->waitingworker) {
-			if (write(rid->reqhead->pipe[1]," ",1)!=1) {
+		ind->closewaiting++;
+		if (ind->reqhead->waitingworker) {
+			if (write(ind->reqhead->pipe[1]," ",1)!=1) {
 				syslog(LOG_ERR,"can't write to pipe !!!");
 			}
-			rid->reqhead->waitingworker=0;
+			ind->reqhead->waitingworker=0;
 		}
 #ifdef RDEBUG
-		fprintf(stderr,"%.6lf: inode: %"PRIu32" ; waiting for close\n",monotonic_seconds(),rid->inode);
+		fprintf(stderr,"%.6lf: inode: %"PRIu32" ; waiting for close\n",monotonic_seconds(),ind->inode);
 #endif
-		zassert(pthread_cond_wait(&(rid->closecond),&(rid->lock)));
-		rid->closewaiting--;
+		zassert(pthread_cond_wait(&(ind->closecond),&(ind->lock)));
+		ind->closewaiting--;
 	}
 #ifdef RDEBUG
-	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; reqhead: %s ; inqueue: %u - delete structure\n",monotonic_seconds(),rid->inode,rid->reqhead?"NOT NULL":"NULL",rid->inqueue);
+	fprintf(stderr,"%.6lf: closing: %"PRIu32" ; reqhead: %s ; inqueue: %u - delete structure\n",monotonic_seconds(),ind->inode,ind->reqhead?"NOT NULL":"NULL",ind->inqueue);
 #endif
-	zassert(pthread_mutex_unlock(&(rid->lock)));
+	zassert(pthread_mutex_unlock(&(ind->lock)));
 	zassert(pthread_mutex_lock(&glock));
-	idp = &(idhash[idh]);
-	while ((id=*idp)) {
-		if (id==rid) {
-			*idp = id->next;
+	indp = &(indhash[indh]);
+	while ((ind=*indp)) {
+		if (ind==(inodedata*)vid) {
+			*indp = ind->next;
 			zassert(pthread_mutex_unlock(&glock));
-			zassert(pthread_mutex_lock(&(id->lock)));
-			zassert(pthread_mutex_unlock(&(id->lock)));
-			zassert(pthread_cond_destroy(&(id->closecond)));
-			zassert(pthread_mutex_destroy(&(id->lock)));
-			free(id->mreq_csdata);
-			free(id);
+			zassert(pthread_mutex_lock(&(ind->lock)));
+			zassert(pthread_mutex_unlock(&(ind->lock)));
+			zassert(pthread_cond_destroy(&(ind->closecond)));
+			zassert(pthread_mutex_destroy(&(ind->lock)));
+//			free(ind->mreq_csdata[i]);
+			free(ind);
 			return;
 		} else {
-			idp = &(id->next);
+			indp = &(ind->next);
 		}
 	}
 	zassert(pthread_mutex_unlock(&glock));

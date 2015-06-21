@@ -27,6 +27,18 @@
 
 #define MAXCSCOUNT 10000
 
+typedef enum {
+	CHUNK_FLOOP_NOTFOUND,
+	CHUNK_FLOOP_DELETED,
+	CHUNK_FLOOP_MISSING_NOCOPY,
+	CHUNK_FLOOP_MISSING_INVALID,
+	CHUNK_FLOOP_MISSING_WRONGVERSION,
+	CHUNK_FLOOP_UNDERGOAL_AFLAG_NOT_CHANGED,
+	CHUNK_FLOOP_UNDERGOAL_AFLAG_CHANGED,
+	CHUNK_FLOOP_OK_AFLAG_NOT_CHANGED,
+	CHUNK_FLOOP_OK_AFLAG_CHANGED
+} chunkfloop;
+
 int chunk_mr_multi_modify(uint32_t ts,uint64_t *nchunkid,uint64_t ochunkid,uint8_t lsetid,uint8_t opflag);
 int chunk_mr_multi_truncate(uint32_t ts,uint64_t *nchunkid,uint64_t ochunkid,uint8_t lsetid);
 //int chunk_multi_reinitialize(uint32_t ts,uint64_t chunkid);
@@ -48,10 +60,13 @@ uint32_t chunk_count(void);
 void chunk_info(uint32_t *allchunks,uint32_t *allcopies,uint32_t *regcopies);
 uint8_t chunk_counters_in_progress(void);
 
+int chunk_get_validcopies(uint64_t chunkid,uint8_t *vcopies);
+
 int chunk_get_archflag(uint64_t chunkid,uint8_t *archflag);
 int chunk_univ_archflag(uint64_t chunkid,uint8_t archflag,uint32_t *archflagchanged);
-int chunk_get_validcopies(uint64_t chunkid,uint8_t *vcopies,uint8_t *goalcopies,uint8_t archflag,uint32_t *archflagchanged);
+chunkfloop chunk_fileloop_task(uint64_t chunkid,uint8_t lsetid,uint8_t aftereof,uint8_t archflag);
 
+int chunk_read_check(uint32_t ts,uint64_t chunkid);
 int chunk_multi_modify(uint64_t *nchunkid,uint64_t ochunkid,uint8_t lsetid,uint8_t *opflag);
 int chunk_multi_truncate(uint64_t *nchunkid,uint64_t ochunkid,uint32_t length,uint8_t lsetid);
 //int chunk_multi_reinitialize(uint64_t chunkid);
@@ -60,7 +75,10 @@ int chunk_repair(uint8_t lsetid,uint64_t ochunkid,uint32_t *nversion);
 int chunk_locked_or_busy(void *cptr);
 
 /* ---- */
+
 uint8_t chunk_get_version_and_csdata(uint8_t mode,uint64_t chunkid,uint32_t cuip,uint32_t *version,uint8_t *count,uint8_t cs_data[100*14]);
+uint8_t chunk_get_version_and_copies(uint64_t chunkid,uint32_t *version,uint8_t *count,uint8_t cs_data[100*7]);
+
 /* ---- */
 uint16_t chunk_server_connected(void *ptr);
 
