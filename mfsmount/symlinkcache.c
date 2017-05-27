@@ -1,22 +1,26 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +28,8 @@
 #include <pthread.h>
 
 #include "stats.h"
+#include "clocks.h"
+#include "massert.h"
 #include "MFSCommunication.h"
 
 #define HASH_FUNCTIONS 4
@@ -37,11 +43,12 @@
 
 typedef struct _hashbucket {
 	uint32_t inode[HASH_BUCKET_SIZE];
-	uint32_t time[HASH_BUCKET_SIZE];
+	double time[HASH_BUCKET_SIZE];
 	uint8_t* path[HASH_BUCKET_SIZE];
 //	uint16_t multihit;
 } hashbucket;
 
+static const uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
 static hashbucket *symlinkhash = NULL;
 static pthread_mutex_t slcachelock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -53,47 +60,42 @@ enum {
 	STATNODES
 };
 
-static uint64_t *statsptr[STATNODES];
+static void *statsptr[STATNODES];
 
 static inline void symlink_cache_statsptr_init(void) {
 	void *s;
-	s = stats_get_subnode(NULL,"symlink_cache",0);
-	statsptr[INSERTS] = stats_get_counterptr(stats_get_subnode(s,"inserts",0));
-	statsptr[SEARCH_HITS] = stats_get_counterptr(stats_get_subnode(s,"search_hits",0));
-	statsptr[SEARCH_MISSES] = stats_get_counterptr(stats_get_subnode(s,"search_misses",0));
-	statsptr[LINKS] = stats_get_counterptr(stats_get_subnode(s,"#links",1));
+	s = stats_get_subnode(NULL,"symlink_cache",0,0);
+	statsptr[INSERTS] = stats_get_subnode(s,"inserts",0,1);
+	statsptr[SEARCH_HITS] = stats_get_subnode(s,"search_hits",0,1);
+	statsptr[SEARCH_MISSES] = stats_get_subnode(s,"search_misses",0,1);
+	statsptr[LINKS] = stats_get_subnode(s,"#links",1,1);
 }
 
 static inline void symlink_cache_stats_inc(uint8_t id) {
 	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])++;
-		stats_unlock();
+		stats_counter_inc(statsptr[id]);
 	}
 }
 
 static inline void symlink_cache_stats_dec(uint8_t id) {
 	if (id<STATNODES) {
-		stats_lock();
-		(*statsptr[id])--;
-		stats_unlock();
+		stats_counter_dec(statsptr[id]);
 	}
 }
 
 void symlink_cache_insert(uint32_t inode,const uint8_t *path) {
-	uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
 	hashbucket *hb,*fhb;
 	uint8_t h,i,fi;
-	uint32_t now;
-	uint32_t mints;
+	double t;
+	double mint;
 
-	now = time(NULL);
-	mints = UINT32_MAX;
+	t = monotonic_seconds();
+	mint = t;
 	fi = 0;
 	fhb = NULL;
 
 	symlink_cache_stats_inc(INSERTS);
-	pthread_mutex_lock(&slcachelock);
+	zassert(pthread_mutex_lock(&slcachelock));
 	for (h=0 ; h<HASH_FUNCTIONS ; h++) {
 		hb = symlinkhash + ((inode*primes[h])%HASH_BUCKETS);
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
@@ -102,14 +104,14 @@ void symlink_cache_insert(uint32_t inode,const uint8_t *path) {
 					free(hb->path[i]);
 				}
 				hb->path[i]=(uint8_t*)strdup((const char *)path);
-				hb->time[i]=now;
-				pthread_mutex_unlock(&slcachelock);
+				hb->time[i]=t;
+				zassert(pthread_mutex_unlock(&slcachelock));
 				return;
 			}
-			if (hb->time[i]<mints) {
+			if (hb->time[i]<mint) {
 				fhb = hb;
 				fi = i;
-				mints = hb->time[i];
+				mint = hb->time[i];
 			}
 		}
 	}
@@ -122,51 +124,62 @@ void symlink_cache_insert(uint32_t inode,const uint8_t *path) {
 		}
 		fhb->inode[fi]=inode;
 		fhb->path[fi]=(uint8_t*)strdup((const char *)path);
-		fhb->time[fi]=now;
+		fhb->time[fi]=t;
 	}
-	pthread_mutex_unlock(&slcachelock);
+	zassert(pthread_mutex_unlock(&slcachelock));
 }
 
 int symlink_cache_search(uint32_t inode,const uint8_t **path) {
-	uint32_t primes[HASH_FUNCTIONS] = {1072573589U,3465827623U,2848548977U,748191707U};
 	hashbucket *hb;
 	uint8_t h,i;
-	uint32_t now;
+	double t;
 
-	now = time(NULL);
+	t = monotonic_seconds();
 
-	pthread_mutex_lock(&slcachelock);
+	zassert(pthread_mutex_lock(&slcachelock));
 	for (h=0 ; h<HASH_FUNCTIONS ; h++) {
 		hb = symlinkhash + ((inode*primes[h])%HASH_BUCKETS);
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
 			if (hb->inode[i]==inode) {
-				if (hb->time[i]+MFS_INODE_REUSE_DELAY<now) {
+				if (hb->time[i]+MFS_INODE_REUSE_DELAY<t) {
 					if (hb->path[i]) {
 						free(hb->path[i]);
 						hb->path[i]=NULL;
 					}
-					hb->time[i]=0;
-					hb->inode[i]=0;
-					pthread_mutex_unlock(&slcachelock);
+					hb->time[i] = 0.0;
+					hb->inode[i] = 0;
+					zassert(pthread_mutex_unlock(&slcachelock));
 					symlink_cache_stats_dec(LINKS);
 					symlink_cache_stats_inc(SEARCH_MISSES);
 					return 0;
 				}
 				*path = hb->path[i];
-				pthread_mutex_unlock(&slcachelock);
+				zassert(pthread_mutex_unlock(&slcachelock));
 				symlink_cache_stats_inc(SEARCH_HITS);
 				return 1;
 			}
 		}
 	}
-	pthread_mutex_unlock(&slcachelock);
+	zassert(pthread_mutex_unlock(&slcachelock));
 	symlink_cache_stats_inc(SEARCH_MISSES);
 	return 0;
 }
 
 void symlink_cache_init(void) {
+	hashbucket *hb;
+	uint8_t i;
+	uint32_t hi;
+
 	symlinkhash = malloc(sizeof(hashbucket)*HASH_BUCKETS);
-	memset(symlinkhash,0,sizeof(hashbucket)*HASH_BUCKETS);
+	passert(symlinkhash);
+	for (hi=0 ; hi<HASH_BUCKETS ; hi++) {
+		hb = symlinkhash + hi;
+		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
+			hb->inode[i] = 0;
+			hb->time[i] = 0.0;
+			hb->path[i] = NULL;
+		}
+	}
 	symlink_cache_statsptr_init();
 }
 
@@ -175,15 +188,17 @@ void symlink_cache_term(void) {
 	uint8_t i;
 	uint32_t hi;
 
-	pthread_mutex_lock(&slcachelock);
+	zassert(pthread_mutex_lock(&slcachelock));
 	for (hi=0 ; hi<HASH_BUCKETS ; hi++) {
 		hb = symlinkhash + hi;
 		for (i=0 ; i<HASH_BUCKET_SIZE ; i++) {
 			if (hb->path[i]) {
 				free(hb->path[i]);
 			}
+			hb->path[i] = NULL;
 		}
 	}
 	free(symlinkhash);
-	pthread_mutex_unlock(&slcachelock);
+	symlinkhash = NULL;
+	zassert(pthread_mutex_unlock(&slcachelock));
 }

@@ -1,22 +1,26 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdlib.h>
 #include <pthread.h>
@@ -40,6 +44,7 @@ typedef struct _queue {
 	uint32_t maxsize;
 	uint32_t freewaiting;
 	uint32_t fullwaiting;
+	uint32_t closed;
 	pthread_cond_t waitfree,waitfull;
 	pthread_mutex_t lock;
 } queue;
@@ -55,6 +60,7 @@ void* queue_new(uint32_t size) {
 	q->maxsize = size;
 	q->freewaiting = 0;
 	q->fullwaiting = 0;
+	q->closed = 0;
 	if (size) {
 		zassert(pthread_cond_init(&(q->waitfull),NULL));
 	}
@@ -81,6 +87,21 @@ void queue_delete(void *que) {
 		zassert(pthread_cond_destroy(&(q->waitfull)));
 	}
 	free(q);
+}
+
+void queue_close(void *que) {
+	queue *q = (queue*)que;
+	zassert(pthread_mutex_lock(&(q->lock)));
+	q->closed = 1;
+	if (q->freewaiting>0) {
+		zassert(pthread_cond_broadcast(&(q->waitfree)));
+		q->freewaiting = 0;
+	}
+	if (q->fullwaiting>0) {
+		zassert(pthread_cond_broadcast(&(q->waitfull)));
+		q->fullwaiting = 0;
+	}
+	zassert(pthread_mutex_unlock(&(q->lock)));
 }
 
 int queue_isempty(void *que) {
@@ -141,9 +162,15 @@ int queue_put(void *que,uint32_t id,uint32_t op,uint8_t *data,uint32_t leng) {
 			errno = EDEADLK;
 			return -1;
 		}
-		while (q->size+leng>q->maxsize) {
+		while (q->size+leng>q->maxsize && q->closed==0) {
 			q->fullwaiting++;
 			zassert(pthread_cond_wait(&(q->waitfull),&(q->lock)));
+		}
+		if (q->closed) {
+			zassert(pthread_mutex_unlock(&(q->lock)));
+			free(qe);
+			errno = EIO;
+			return -1;
 		}
 	}
 	q->elements++;
@@ -197,9 +224,26 @@ int queue_get(void *que,uint32_t *id,uint32_t *op,uint8_t **data,uint32_t *leng)
 	queue *q = (queue*)que;
 	qentry *qe;
 	zassert(pthread_mutex_lock(&(q->lock)));
-	while (q->elements==0) {
+	while (q->elements==0 && q->closed==0) {
 		q->freewaiting++;
 		zassert(pthread_cond_wait(&(q->waitfree),&(q->lock)));
+	}
+	if (q->closed) {
+		zassert(pthread_mutex_unlock(&(q->lock)));
+		if (id) {
+			*id=0;
+		}
+		if (op) {
+			*op=0;
+		}
+		if (data) {
+			*data=NULL;
+		}
+		if (leng) {
+			*leng=0;
+		}
+		errno = EIO;
+		return -1;
 	}
 	qe = q->head;
 	q->head = qe->next;

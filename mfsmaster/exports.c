@@ -1,22 +1,26 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -37,6 +41,8 @@
 #include "cfg.h"
 #include "slogger.h"
 #include "massert.h"
+#include "crc.h"
+#include "hashfn.h"
 
 typedef struct _exports {
 	uint32_t pleng;
@@ -62,7 +68,50 @@ typedef struct _exports {
 } exports;
 
 static exports *exports_records;
+static uint64_t exports_csum;
 static char *ExportsFileName;
+
+uint64_t exports_entry_checksum(exports *e) {
+	uint64_t csum;
+	uint8_t edata[56];
+	uint8_t *ptr;
+	uint32_t crc,murmur;
+
+	ptr = edata;
+	put32bit(&ptr,e->fromip);
+	put32bit(&ptr,e->toip);
+	put32bit(&ptr,e->minversion);
+	if (e->needpassword) {
+		memcpy(ptr,e->passworddigest,16);
+	} else {
+		memset(ptr,0,16);
+	}
+	ptr+=16;
+	put8bit(&ptr,(e->alldirs<<3) + (e->needpassword<<2) + (e->meta<<1) + e->rootredefined);
+	put8bit(&ptr,e->sesflags);
+	put8bit(&ptr,e->mingoal);
+	put8bit(&ptr,e->maxgoal);
+	put32bit(&ptr,e->mintrashtime);
+	put32bit(&ptr,e->maxtrashtime);
+	put32bit(&ptr,e->rootuid);
+	put32bit(&ptr,e->rootgid);
+	put32bit(&ptr,e->mapalluid);
+	put32bit(&ptr,e->mapallgid);
+	crc = mycrc32(0xFFFFFFFF,edata,56);
+	murmur = murmur3_32(edata,56,0);
+	if (e->pleng>0) {
+		crc = mycrc32(crc,e->path,e->pleng);
+		murmur = murmur3_32(e->path,e->pleng,murmur);
+	}
+	csum = crc;
+	csum <<= 32;
+	csum |= murmur;
+	return csum;
+}
+
+uint64_t exports_checksum(void) {
+	return exports_csum;
+}
 
 char* exports_strsep(char **stringp, const char *delim) {
 	char *s;
@@ -74,6 +123,9 @@ char* exports_strsep(char **stringp, const char *delim) {
 	if (s==NULL) {
 		return NULL;
 	}
+	while (*s==' ' || *s=='\t') {
+		s++;
+	}
 	tok = s;
 	while (1) {
 		c = *s++;
@@ -81,11 +133,15 @@ char* exports_strsep(char **stringp, const char *delim) {
 		do {
 			if ((sc=*spanp++)==c) {
 				if (c==0) {
-					s = NULL;
+					*stringp = NULL;
 				} else {
-					s[-1] = 0;
+					*stringp = s;
 				}
-				*stringp = s;
+				s--;
+				while ((s>tok) && (s[-1]==' ' || s[-1]=='\t')) {
+					s--;
+				}
+				*s = 0;
 				return tok;
 			}
 		} while (sc!=0);
@@ -139,16 +195,18 @@ void exports_info_data(uint8_t versmode,uint8_t *buff) {
 	}
 }
 
-uint8_t exports_check(uint32_t ip,uint32_t version,uint8_t meta,const uint8_t *path,const uint8_t rndcode[32],const uint8_t passcode[16],uint8_t *sesflags,uint32_t *rootuid,uint32_t *rootgid,uint32_t *mapalluid,uint32_t *mapallgid,uint8_t *mingoal,uint8_t *maxgoal,uint32_t *mintrashtime,uint32_t *maxtrashtime) {
+uint8_t exports_check(uint32_t ip,uint32_t version,const uint8_t *path,const uint8_t rndcode[32],const uint8_t passcode[16],uint8_t *sesflags,uint32_t *rootuid,uint32_t *rootgid,uint32_t *mapalluid,uint32_t *mapallgid,uint8_t *mingoal,uint8_t *maxgoal,uint32_t *mintrashtime,uint32_t *maxtrashtime) {
 	const uint8_t *p;
 	uint32_t pleng,i;
 	uint8_t rndstate;
+	uint8_t meta;
 	int ok,nopass;
 	md5ctx md5c;
 	uint8_t entrydigest[16];
 	exports *e,*f;
 
 //	syslog(LOG_NOTICE,"check exports for: %u.%u.%u.%u:%s",(ip>>24)&0xFF,(ip>>16)&0xFF,(ip>>8)&0xFF,ip&0xFF,path);
+	meta = (path==NULL)?1:0;
 
 	if (meta==0) {
 		p = path;
@@ -228,7 +286,7 @@ uint8_t exports_check(uint32_t ip,uint32_t version,uint8_t meta,const uint8_t *p
 					f=e;
 				} else if (e->rootuid==0 && f->rootuid!=0) {	// prefer root not restricted to restricted
 					f=e;
-				} else if ((e->sesflags&SESFLAG_CANCHANGEQUOTA)!=0 && (f->sesflags&SESFLAG_CANCHANGEQUOTA)==0) {	// prefer lines with more privileges
+				} else if ((e->sesflags&SESFLAG_ADMIN)!=0 && (f->sesflags&SESFLAG_ADMIN)==0) {	// prefer lines with more privileges
 					f=e;
 				} else if (e->needpassword==1 && f->needpassword==0) {	// prefer lines with passwords
 					f=e;
@@ -283,7 +341,7 @@ void exports_freelist(exports *arec) {
 //  password=password
 //  dynamicip
 //  ignoregid
-//  canchangequota
+//  admin
 //  mingoal=#
 //  maxgoal=#
 //  mintrashtime=[#w][#d][#h][#m][#[s]]
@@ -674,6 +732,13 @@ int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 					arec->alldirs = 1;
 				}
 				o=1;
+			} else if (strcmp(p,"admin")==0) {
+				if (arec->meta) {
+					mfs_arg_syslog(LOG_WARNING,"meta option ignored: %s",p);
+				} else {
+					arec->sesflags |= SESFLAG_ADMIN;
+				}
+				o=1;
 			}
 			break;
 		case 'd':
@@ -683,11 +748,11 @@ int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 			}
 			break;
 		case 'c':
-			if (strcmp(p,"canchangequota")==0) {
+			if (strcmp(p,"canchangequota")==0) { // deprecated - use 'admin'
 				if (arec->meta) {
 					mfs_arg_syslog(LOG_WARNING,"meta option ignored: %s",p);
 				} else {
-					arec->sesflags |= SESFLAG_CANCHANGEQUOTA;
+					arec->sesflags |= SESFLAG_ADMIN;
 				}
 				o=1;
 			}
@@ -811,34 +876,41 @@ int exports_parseoptions(char *opts,uint32_t lineno,exports *arec) {
 	return 0;
 }
 
-int exports_parseline(char *line,uint32_t lineno,exports *arec) {
+int exports_parseline(char *line,uint32_t lineno,exports *arec,exports **defaults) {
 	char *net,*path;
 	char *p;
 	uint32_t pleng;
 
-	arec->pleng = 0;
-	arec->path = NULL;
-	arec->fromip = 0;
-	arec->toip = 0;
-	arec->minversion = 0;
-	arec->alldirs = 0;
-	arec->needpassword = 0;
-	arec->meta = 0;
-	arec->rootredefined = 0;
-	arec->sesflags = SESFLAG_READONLY;
-	arec->mingoal = 1;
-	arec->maxgoal = 9;
-	arec->mintrashtime = 0;
-	arec->maxtrashtime = UINT32_C(0xFFFFFFFF);
-	arec->rootuid = 999;
-	arec->rootgid = 999;
-	arec->mapalluid = 999;
-	arec->mapallgid = 999;
-	arec->next = NULL;
+	if ((*defaults)==NULL) {
+		arec->pleng = 0;
+		arec->path = NULL;
+		arec->fromip = 0;
+		arec->toip = 0;
+		arec->minversion = 0;
+		arec->alldirs = 0;
+		arec->needpassword = 0;
+		arec->meta = 0;
+		arec->rootredefined = 0;
+		arec->sesflags = SESFLAG_READONLY;
+		arec->mingoal = 1;
+		arec->maxgoal = 9;
+		arec->mintrashtime = 0;
+		arec->maxtrashtime = UINT32_C(0xFFFFFFFF);
+		arec->rootuid = 999;
+		arec->rootgid = 999;
+		arec->mapalluid = 999;
+		arec->mapallgid = 999;
+		arec->next = NULL;
+	} else {
+		memcpy(arec,*defaults,sizeof(exports));
+	}
 
 	p = line;
 	while (*p==' ' || *p=='\t') {
 		p++;
+	}
+	if (*p==0 || *p=='#') { // empty line or line with comment only
+		return -1;
 	}
 	net = p;
 	while (*p && *p!=' ' && *p!='\t') {
@@ -850,7 +922,27 @@ int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	}
 	*p=0;
 	p++;
-	if (exports_parsenet(net,&arec->fromip,&arec->toip)<0) {
+	if (strcasecmp(net,"DEFAULTS")==0) {
+		while (*p==' ' || *p=='\t') {
+			p++;
+		}
+
+		if (exports_parseoptions(p,lineno,arec)<0) {
+			return -1;
+		}
+
+		if ((arec->sesflags&SESFLAG_MAPALL) && (arec->rootredefined==0)) {
+			arec->rootuid = arec->mapalluid;
+			arec->rootgid = arec->mapallgid;
+		}
+
+		if ((*defaults)==NULL) {
+			*defaults = malloc(sizeof(exports));
+			passert(*defaults);
+		}
+		memcpy(*defaults,arec,sizeof(exports));
+		return 0;
+	} else if (exports_parsenet(net,&arec->fromip,&arec->toip)<0) {
 		mfs_arg_syslog(LOG_WARNING,"mfsexports: incorrect ip/network definition in line: %"PRIu32,lineno);
 		return -1;
 	}
@@ -861,8 +953,10 @@ int exports_parseline(char *line,uint32_t lineno,exports *arec) {
 	if (p[0]=='.' && (p[1]==0 || p[1]==' ' || p[1]=='\t')) {
 		path = NULL;
 		pleng = 0;
-		arec->rootuid = 0;
-		arec->rootgid = 0;
+		if (arec->rootredefined==0) {
+			arec->rootuid = 0;
+			arec->rootgid = 0;
+		}
 		arec->meta = 1;
 		p++;
 	} else {
@@ -923,7 +1017,7 @@ void exports_loadexports(void) {
 	FILE *fd;
 	char linebuff[10000];
 	uint32_t s,lineno;
-	exports *newexports,**netail,*arec;
+	exports *newexports,**netail,*arec,*defaults;
 
 	fd = fopen(ExportsFileName,"r");
 	if (fd==NULL) {
@@ -948,26 +1042,28 @@ void exports_loadexports(void) {
 	lineno = 1;
 	arec = malloc(sizeof(exports));
 	passert(arec);
+	defaults = NULL;
 	while (fgets(linebuff,10000,fd)) {
-		if (linebuff[0]!='#') {
-			linebuff[9999]=0;
-			s=strlen(linebuff);
-			while (s>0 && (linebuff[s-1]=='\r' || linebuff[s-1]=='\n' || linebuff[s-1]=='\t' || linebuff[s-1]==' ')) {
-				s--;
-			}
-			if (s>0) {
-				linebuff[s]=0;
-				if (exports_parseline(linebuff,lineno,arec)>=0) {
-					*netail = arec;
-					netail = &(arec->next);
-					arec = malloc(sizeof(exports));
-					passert(arec);
-				}
+		linebuff[9999]=0;
+		s=strlen(linebuff);
+		while (s>0 && (linebuff[s-1]=='\r' || linebuff[s-1]=='\n' || linebuff[s-1]=='\t' || linebuff[s-1]==' ')) {
+			s--;
+		}
+		if (s>0) {
+			linebuff[s]=0;
+			if (exports_parseline(linebuff,lineno,arec,&defaults)>=0) {
+				*netail = arec;
+				netail = &(arec->next);
+				arec = malloc(sizeof(exports));
+				passert(arec);
 			}
 		}
 		lineno++;
 	}
 	free(arec);
+	if (defaults!=NULL) {
+		free(defaults);
+	}
 	if (ferror(fd)) {
 		fclose(fd);
 		syslog(LOG_WARNING,"error reading mfsexports file - exports not changed");
@@ -978,6 +1074,10 @@ void exports_loadexports(void) {
 	fclose(fd);
 	exports_freelist(exports_records);
 	exports_records = newexports;
+	exports_csum = 0;
+	for (arec=exports_records ; arec!=NULL ; arec=arec->next) {
+		exports_csum += exports_entry_checksum(arec);
+	}
 	mfs_syslog(LOG_NOTICE,"exports file has been loaded");
 }
 
@@ -1020,7 +1120,7 @@ int exports_init(void) {
 		fprintf(stderr,"no exports defined !!!\n");
 		return -1;
 	}
-	main_reloadregister(exports_reload);
-	main_destructregister(exports_term);
+//	main_reload_register(exports_reload); // reload called by matoclserv_reload_sessions
+	main_destruct_register(exports_term);
 	return 0;
 }

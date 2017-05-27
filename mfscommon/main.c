@@ -1,25 +1,29 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #ifndef MFSMAXFILES
-#define MFSMAXFILES 5000
+#define MFSMAXFILES 4096
 #endif
 
 #if defined(HAVE_MLOCKALL)
@@ -34,9 +38,13 @@
 #  endif
 #endif
 
-//#if defined(_THREAD_SAFE) || defined(_REENTRANT) || defined(_USE_PTHREADS)
-//#  define USE_PTHREADS 1
-//#endif
+#if defined(HAVE_MALLOC_H)
+#  include <malloc.h>
+#endif
+
+#if defined(HAVE_SYS_PRCTL_H)
+#  include <sys/prctl.h>
+#endif
 
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -56,28 +64,29 @@
 #include <sys/resource.h>
 #include <grp.h>
 #include <pwd.h>
-//#ifdef USE_PTHREADS
-//#include <pthread.h>
-//#endif
 
 #define STR_AUX(x) #x
 #define STR(x) STR_AUX(x)
 
-
-#include "cfg.h"
 #include "main.h"
+#include "clocks.h"
+#include "sockets.h"
+#include "cfg.h"
 #include "strerr.h"
 #include "crc.h"
 #include "init.h"
 #include "massert.h"
 #include "slogger.h"
+#include "portable.h"
 
 #define RM_RESTART 0
 #define RM_START 1
 #define RM_STOP 2
 #define RM_RELOAD 3
-#define RM_TEST 4
-#define RM_KILL 5
+#define RM_INFO 4
+#define RM_TEST 5
+#define RM_KILL 6
+#define RM_TRY_RESTART 7
 
 typedef struct deentry {
 	void (*fun)(void);
@@ -111,6 +120,22 @@ typedef struct rlentry {
 static rlentry *rlhead=NULL;
 
 
+typedef struct inentry {
+	void (*fun)(void);
+	struct inentry *next;
+} inentry;
+
+static inentry *inhead=NULL;
+
+
+typedef struct kaentry {
+	void (*fun)(void);
+	struct kaentry *next;
+} kaentry;
+
+static kaentry *kahead=NULL;
+
+
 typedef struct pollentry {
 	void (*desc)(struct pollfd *,uint32_t *);
 	void (*serve)(struct pollfd *);
@@ -128,12 +153,19 @@ typedef struct eloopentry {
 static eloopentry *eloophead=NULL;
 
 
+typedef struct chldentry {
+	pid_t pid;
+	void (*fun)(int);
+	struct chldentry *next;
+} chldentry;
+
+static chldentry *chldhead=NULL;
+
+
 typedef struct timeentry {
-	uint32_t nextevent;
-	uint32_t seconds;
-	uint32_t offset;
-	int mode;
-//	int offset;
+	uint64_t nextevent;
+	uint64_t useconds;
+	uint64_t usecoffset;
 	void (*fun)(void);
 	struct timeentry *next;
 } timeentry;
@@ -148,7 +180,7 @@ static int signalpipe[2];
 
 /* interface */
 
-void main_destructregister (void (*fun)(void)) {
+void main_destruct_register (void (*fun)(void)) {
 	deentry *aux=(deentry*)malloc(sizeof(deentry));
 	passert(aux);
 	aux->fun = fun;
@@ -156,7 +188,7 @@ void main_destructregister (void (*fun)(void)) {
 	dehead = aux;
 }
 
-void main_canexitregister (int (*fun)(void)) {
+void main_canexit_register (int (*fun)(void)) {
 	ceentry *aux=(ceentry*)malloc(sizeof(ceentry));
 	passert(aux);
 	aux->fun = fun;
@@ -164,7 +196,7 @@ void main_canexitregister (int (*fun)(void)) {
 	cehead = aux;
 }
 
-void main_wantexitregister (void (*fun)(void)) {
+void main_wantexit_register (void (*fun)(void)) {
 	weentry *aux=(weentry*)malloc(sizeof(weentry));
 	passert(aux);
 	aux->fun = fun;
@@ -172,7 +204,7 @@ void main_wantexitregister (void (*fun)(void)) {
 	wehead = aux;
 }
 
-void main_reloadregister (void (*fun)(void)) {
+void main_reload_register (void (*fun)(void)) {
 	rlentry *aux=(rlentry*)malloc(sizeof(rlentry));
 	passert(aux);
 	aux->fun = fun;
@@ -180,7 +212,23 @@ void main_reloadregister (void (*fun)(void)) {
 	rlhead = aux;
 }
 
-void main_pollregister (void (*desc)(struct pollfd *,uint32_t *),void (*serve)(struct pollfd *)) {
+void main_info_register (void (*fun)(void)) {
+	inentry *aux=(inentry*)malloc(sizeof(inentry));
+	passert(aux);
+	aux->fun = fun;
+	aux->next = inhead;
+	inhead = aux;
+}
+
+void main_keepalive_register (void (*fun)(void)) {
+	kaentry *aux=(kaentry*)malloc(sizeof(kaentry));
+	passert(aux);
+	aux->fun = fun;
+	aux->next = kahead;
+	kahead = aux;
+}
+
+void main_poll_register (void (*desc)(struct pollfd *,uint32_t *),void (*serve)(struct pollfd *)) {
 	pollentry *aux=(pollentry*)malloc(sizeof(pollentry));
 	passert(aux);
 	aux->desc = desc;
@@ -189,7 +237,7 @@ void main_pollregister (void (*desc)(struct pollfd *,uint32_t *),void (*serve)(s
 	pollhead = aux;
 }
 
-void main_eachloopregister (void (*fun)(void)) {
+void main_eachloop_register (void (*fun)(void)) {
 	eloopentry *aux=(eloopentry*)malloc(sizeof(eloopentry));
 	passert(aux);
 	aux->fun = fun;
@@ -197,14 +245,61 @@ void main_eachloopregister (void (*fun)(void)) {
 	eloophead = aux;
 }
 
-void* main_timeregister (int mode,uint32_t seconds,uint32_t offset,void (*fun)(void)) {
+void main_chld_register (pid_t pid,void (*fun)(int)) {
+	chldentry *aux=(chldentry*)malloc(sizeof(chldentry));
+	passert(aux);
+	aux->fun = fun;
+	aux->pid = pid;
+	aux->next = chldhead;
+	chldhead = aux;
+}
+
+void* main_msectime_register (uint32_t mseconds,uint32_t offset,void (*fun)(void)) {
 	timeentry *aux;
+	uint64_t useconds = UINT64_C(1000) * (uint64_t)mseconds;
+	uint64_t usecoffset = UINT64_C(1000) * (uint64_t)offset;
+	if (useconds==0 || usecoffset>=useconds) {
+		return NULL;
+	}
+	aux = (timeentry*)malloc(sizeof(timeentry));
+	passert(aux);
+	aux->nextevent = (((usecnow / useconds) * useconds) + usecoffset);
+	while (aux->nextevent<usecnow) {
+		aux->nextevent+=useconds;
+	}
+	aux->useconds = useconds;
+	aux->usecoffset = usecoffset;
+	aux->fun = fun;
+	aux->next = timehead;
+	timehead = aux;
+	return aux;
+}
+
+int main_msectime_change(void* x,uint32_t mseconds,uint32_t offset) {
+	timeentry *aux = (timeentry*)x;
+	uint64_t useconds = UINT64_C(1000) * (uint64_t)mseconds;
+	uint64_t usecoffset = UINT64_C(1000) * (uint64_t)offset;
+	if (useconds==0 || usecoffset>=useconds) {
+		return -1;
+	}
+	aux->nextevent = (((usecnow / useconds) * useconds) + usecoffset);
+	while (aux->nextevent<usecnow) {
+		aux->nextevent+=useconds;
+	}
+	aux->useconds = useconds;
+	aux->usecoffset = usecoffset;
+	return 0;
+}
+
+void* main_time_register (uint32_t seconds,uint32_t offset,void (*fun)(void)) {
+	return main_msectime_register(1000*seconds,1000*offset,fun);
+/*	timeentry *aux;
 	if (seconds==0 || offset>=seconds) {
 		return NULL;
 	}
 	aux = (timeentry*)malloc(sizeof(timeentry));
 	passert(aux);
-	aux->nextevent = ((now / seconds) * seconds) + offset;
+	aux->nextevent = (((now / seconds) * seconds) + offset);
 	while (aux->nextevent<now) {
 		aux->nextevent+=seconds;
 	}
@@ -215,10 +310,12 @@ void* main_timeregister (int mode,uint32_t seconds,uint32_t offset,void (*fun)(v
 	aux->next = timehead;
 	timehead = aux;
 	return aux;
+*/
 }
 
-int main_timechange(void* x,int mode,uint32_t seconds,uint32_t offset) {
-	timeentry *aux = (timeentry*)x;
+int main_time_change(void* x,uint32_t seconds,uint32_t offset) {
+	return main_msectime_change(x,1000*seconds,1000*offset);
+/*	timeentry *aux = (timeentry*)x;
 	if (seconds==0 || offset>=seconds) {
 		return -1;
 	}
@@ -230,6 +327,7 @@ int main_timechange(void* x,int mode,uint32_t seconds,uint32_t offset) {
 	aux->offset = offset;
 	aux->mode = mode;
 	return 0;
+*/
 }
 
 /* internal */
@@ -239,6 +337,7 @@ void free_all_registered_entries(void) {
 	ceentry *ce,*cen;
 	weentry *we,*wen;
 	rlentry *re,*ren;
+	inentry *ie,*ien;
 	pollentry *pe,*pen;
 	eloopentry *ee,*een;
 	timeentry *te,*ten;
@@ -261,6 +360,11 @@ void free_all_registered_entries(void) {
 	for (re = rlhead ; re ; re = ren) {
 		ren = re->next;
 		free(re);
+	}
+
+	for (ie = inhead ; ie ; ie = ien) {
+		ien = ie->next;
+		free(ie);
 	}
 
 	for (pe = pollhead ; pe ; pe = pen) {
@@ -293,19 +397,33 @@ uint32_t main_time() {
 	return now;
 }
 
+/*
 uint64_t main_utime() {
 	return usecnow;
 }
-
-void destruct() {
+*/
+static inline void destruct(void) {
 	deentry *deit;
 	for (deit = dehead ; deit!=NULL ; deit=deit->next ) {
 		deit->fun();
 	}
 }
 
+void main_keep_alive(void) {
+	struct timeval tv;
+	gettimeofday(&tv,NULL);
+	usecnow = tv.tv_sec;
+	usecnow *= 1000000;
+	usecnow += tv.tv_usec;
+	now = tv.tv_sec;
+	kaentry *kait;
+	for (kait = kahead ; kait!=NULL ; kait=kait->next ) {
+		kait->fun();
+	}
+}
+
 void mainloop() {
-	uint32_t prevtime = 0;
+	uint64_t prevtime = 0;
 	struct timeval tv;
 	pollentry *pollit;
 	eloopentry *eloopit;
@@ -313,6 +431,7 @@ void mainloop() {
 	ceentry *ceit;
 	weentry *weit;
 	rlentry *rlit;
+	inentry *init;
 	struct pollfd pdesc[MFSMAXFILES];
 	uint32_t ndesc;
 	int i;
@@ -328,16 +447,16 @@ void mainloop() {
 		for (pollit = pollhead ; pollit != NULL ; pollit = pollit->next) {
 			pollit->desc(pdesc,&ndesc);
 		}
-		i = poll(pdesc,ndesc,50);
+		i = poll(pdesc,ndesc,10);
 		gettimeofday(&tv,NULL);
 		usecnow = tv.tv_sec;
 		usecnow *= 1000000;
 		usecnow += tv.tv_usec;
 		now = tv.tv_sec;
 		if (i<0) {
-			if (errno==EAGAIN) {
+			if (!ERRNO_ERROR) {
 				syslog(LOG_WARNING,"poll returned EAGAIN");
-				usleep(100000);
+				portable_usleep(10000);
 				continue;
 			}
 			if (errno!=EINTR) {
@@ -354,6 +473,17 @@ void mainloop() {
 					} else if (sigid=='\002') {
 						syslog(LOG_NOTICE,"reloading config files");
 						r = 1;
+					} else if (sigid=='\003') {
+						syslog(LOG_NOTICE,"child finished");
+						r = 2;
+					} else if (sigid=='\004') {
+						syslog(LOG_NOTICE,"log extra info");
+						r = 3;
+					} else if (sigid=='\005') {
+						syslog(LOG_NOTICE,"unexpected alarm/prof signal received - ignoring");
+					} else if (sigid=='\006') {
+						syslog(LOG_NOTICE,"internal terminate request");
+						t = 1;
 					}
 				}
 			}
@@ -364,52 +494,77 @@ void mainloop() {
 		for (eloopit = eloophead ; eloopit != NULL ; eloopit = eloopit->next) {
 			eloopit->fun();
 		}
-		if (now<prevtime) {
+		if (usecnow<prevtime) {
 			// time went backward !!! - recalculate "nextevent" time
 			// adding previous_time_to_run prevents from running next event too soon.
 			for (timeit = timehead ; timeit != NULL ; timeit = timeit->next) {
-				uint32_t previous_time_to_run = timeit->nextevent - prevtime;
-				if (previous_time_to_run > timeit->seconds) {
-					previous_time_to_run = timeit->seconds;
+				uint64_t previous_time_to_run = timeit->nextevent - prevtime;
+				if (previous_time_to_run > timeit->useconds) {
+					previous_time_to_run = timeit->useconds;
 				}
-				timeit->nextevent = ((now / timeit->seconds) * timeit->seconds) + timeit->offset;
-				while (timeit->nextevent <= now+previous_time_to_run) {
-					timeit->nextevent += timeit->seconds;
+				timeit->nextevent = ((usecnow / timeit->useconds) * timeit->useconds) + timeit->usecoffset;
+				while (timeit->nextevent <= usecnow+previous_time_to_run) {
+					timeit->nextevent += timeit->useconds;
 				}
 			}
-		} else if (now>prevtime+3600) {
+		} else if (usecnow>prevtime+UINT64_C(3600000000)) {
 			// time went forward !!! - just recalculate "nextevent" time
 			for (timeit = timehead ; timeit != NULL ; timeit = timeit->next) {
-				timeit->nextevent = ((now / timeit->seconds) * timeit->seconds) + timeit->offset;
-				while (now >= timeit->nextevent) {
-					timeit->nextevent += timeit->seconds;
+				timeit->nextevent = ((usecnow / timeit->useconds) * timeit->useconds) + timeit->usecoffset;
+				while (usecnow >= timeit->nextevent) {
+					timeit->nextevent += timeit->useconds;
 				}
 			}
 		}
 		for (timeit = timehead ; timeit != NULL ; timeit = timeit->next) {
-			if (now >= timeit->nextevent) {
-				if (timeit->mode == TIMEMODE_RUN_LATE) {
-					while (now >= timeit->nextevent) {
-						timeit->nextevent += timeit->seconds;
-					}
+			if (usecnow >= timeit->nextevent) {
+				uint32_t eventcounter = 0;
+				while (usecnow >= timeit->nextevent && eventcounter<10) { // do not run more than 10 late entries
 					timeit->fun();
-				} else { /* timeit->mode == TIMEMODE_SKIP_LATE */
-					if (now == timeit->nextevent) {
-						timeit->fun();
-					}
-					while (now >= timeit->nextevent) {
-						timeit->nextevent += timeit->seconds;
+					timeit->nextevent += timeit->useconds;
+					eventcounter++;
+				}
+				if (usecnow >= timeit->nextevent) {
+					timeit->nextevent = ((usecnow / timeit->useconds) * timeit->useconds) + timeit->usecoffset;
+					while (usecnow >= timeit->nextevent) {
+						timeit->nextevent += timeit->useconds;
 					}
 				}
 			}
 		}
-		prevtime = now;
-		if (t==0 && r) {
-			cfg_reload();
-			for (rlit = rlhead ; rlit!=NULL ; rlit=rlit->next ) {
-				rlit->fun();
+		prevtime = usecnow;
+		if (r==2) {
+			chldentry *chldit,**chldptr;
+			pid_t pid;
+			int status;
+
+			while ( (pid = waitpid(-1,&status,WNOHANG)) >= 0) {
+				chldptr = &chldhead;
+				while ((chldit = *chldptr)) {
+					if (chldit->pid == pid) {
+						chldit->fun(status);
+						*chldptr = chldit->next;
+						free(chldit);
+					} else {
+						chldptr = &(chldit->next);
+					}
+				}
 			}
 			r = 0;
+		}
+		if (t==0) {
+			if (r==1) {
+				cfg_reload();
+				for (rlit = rlhead ; rlit!=NULL ; rlit=rlit->next ) {
+					rlit->fun();
+				}
+				r = 0;
+			} else if (r==3) {
+				for (init = inhead ; init!=NULL ; init=init->next ) {
+					init->fun();
+				}
+				r = 0;
+			}
 		}
 		if (t==1) {
 			for (weit = wehead ; weit!=NULL ; weit=weit->next ) {
@@ -474,6 +629,26 @@ static int reloadsignal[]={
 	-1
 };
 
+static int infosignal[]={
+#ifdef SIGINFO
+	SIGINFO,
+#endif
+#ifdef SIGUSR1
+	SIGUSR1,
+#endif
+	-1
+};
+
+static int chldsignal[]={
+#ifdef SIGCHLD
+	SIGCHLD,
+#endif
+#ifdef SIGCLD
+	SIGCLD,
+#endif
+	-1
+};
+
 static int ignoresignal[]={
 	SIGQUIT,
 #ifdef SIGPIPE
@@ -488,20 +663,21 @@ static int ignoresignal[]={
 #ifdef SIGTTOU
 	SIGTTOU,
 #endif
-#ifdef SIGINFO
-	SIGINFO,
-#endif
-#ifdef SIGUSR1
-	SIGUSR1,
-#endif
 #ifdef SIGUSR2
 	SIGUSR2,
 #endif
-#ifdef SIGCHLD
-	SIGCHLD,
+	-1
+};
+
+static int alarmsignal[]={
+#ifdef SIGALRM
+	SIGALRM,
 #endif
-#ifdef SIGCLD
-	SIGCLD,
+#ifdef SIGVTALRM
+	SIGVTALRM,
+#endif
+#ifdef SIGPROF
+	SIGPROF,
 #endif
 	-1
 };
@@ -518,6 +694,21 @@ void termhandle(int signo) {
 
 void reloadhandle(int signo) {
 	signo = write(signalpipe[1],"\002",1); // see above
+	(void)signo;
+}
+
+void chldhandle(int signo) {
+	signo = write(signalpipe[1],"\003",1); // see above
+	(void)signo;
+}
+
+void infohandle(int signo) {
+	signo = write(signalpipe[1],"\004",1); // see above
+	(void)signo;
+}
+
+void alarmhandle(int signo) {
+	signo = write(signalpipe[1],"\005",1); // see above
 	(void)signo;
 }
 
@@ -542,6 +733,18 @@ void set_signal_handlers(int daemonflag) {
 	for (i=0 ; reloadsignal[i]>0 ; i++) {
 		sigaction(reloadsignal[i],&sa,(struct sigaction *)0);
 	}
+	sa.sa_handler = infohandle;
+	for (i=0 ; infosignal[i]>0 ; i++) {
+		sigaction(infosignal[i],&sa,(struct sigaction *)0);
+	}
+	sa.sa_handler = alarmhandle;
+	for (i=0 ; alarmsignal[i]>0 ; i++) {
+		sigaction(alarmsignal[i],&sa,(struct sigaction *)0);
+	}
+	sa.sa_handler = chldhandle;
+	for (i=0 ; chldsignal[i]>0 ; i++) {
+		sigaction(chldsignal[i],&sa,(struct sigaction *)0);
+	}
 	sa.sa_handler = SIG_IGN;
 	for (i=0 ; ignoresignal[i]>0 ; i++) {
 		sigaction(ignoresignal[i],&sa,(struct sigaction *)0);
@@ -550,6 +753,78 @@ void set_signal_handlers(int daemonflag) {
 	for (i=0 ; daemonignoresignal[i]>0 ; i++) {
 		sigaction(daemonignoresignal[i],&sa,(struct sigaction *)0);
 	}
+}
+
+#ifdef USE_PTHREADS
+int main_thread_create(pthread_t *th,const pthread_attr_t *attr,void *(*fn)(void *),void *arg) {
+	sigset_t oldset;
+	sigset_t newset;
+	uint32_t i;
+	int res;
+
+	sigemptyset(&newset);
+	for (i=0 ; termsignal[i]>0 ; i++) {
+		sigaddset(&newset, termsignal[i]);
+	}
+	for (i=0 ; reloadsignal[i]>0 ; i++) {
+		sigaddset(&newset, reloadsignal[i]);
+	}
+	for (i=0 ; infosignal[i]>0 ; i++) {
+		sigaddset(&newset, infosignal[i]);
+	}
+	for (i=0 ; alarmsignal[i]>0 ; i++) {
+		sigaddset(&newset, alarmsignal[i]);
+	}
+	for (i=0 ; chldsignal[i]>0 ; i++) {
+		sigaddset(&newset, chldsignal[i]);
+	}
+	for (i=0 ; ignoresignal[i]>0 ; i++) {
+		sigaddset(&newset, ignoresignal[i]);
+	}
+	for (i=0 ; daemonignoresignal[i]>0 ; i++) {
+		sigaddset(&newset, daemonignoresignal[i]);
+	}
+	pthread_sigmask(SIG_BLOCK, &newset, &oldset);
+	res = pthread_create(th,attr,fn,arg);
+	pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+	return res;
+}
+
+int main_minthread_create(pthread_t *th,uint8_t detached,void *(*fn)(void *),void *arg) {
+	static pthread_attr_t *thattr = NULL;
+	static uint8_t thattr_detached;
+	if (thattr == NULL) {
+		size_t mystacksize;
+		thattr = malloc(sizeof(pthread_attr_t));
+		passert(thattr);
+		zassert(pthread_attr_init(thattr));
+#ifdef PTHREAD_STACK_MIN
+		mystacksize = PTHREAD_STACK_MIN;
+		if (mystacksize < 0x100000) {
+			mystacksize = 0x100000;
+		}
+#else
+		mystacksize = 0x100000;
+#endif
+		zassert(pthread_attr_setstacksize(thattr,mystacksize));
+		thattr_detached = detached + 1; // make it different
+	}
+	if (detached != thattr_detached) {
+		if (detached) {
+			zassert(pthread_attr_setdetachstate(thattr,PTHREAD_CREATE_DETACHED));
+		} else {
+			zassert(pthread_attr_setdetachstate(thattr,PTHREAD_CREATE_JOINABLE));
+		}
+		thattr_detached = detached;
+	}
+	return main_thread_create(th,thattr,fn,arg);
+}
+#endif
+
+void main_exit(void) {
+	int i;
+	i = write(signalpipe[1],"\006",1);
+	(void)i;
 }
 
 void signal_cleanup(void) {
@@ -639,7 +914,7 @@ pid_t mylock(int fd) {
 		if (fcntl(fd,F_SETLK,&fl)>=0) {	// lock set
 			return 0;	// ok
 		}
-		if (errno!=EAGAIN) {	// error other than "already locked"
+		if (ERRNO_ERROR) {	// error other than "already locked"
 			return -1;	// error
 		}
 		if (fcntl(fd,F_GETLK,&fl)<0) {	// get lock owner
@@ -658,7 +933,7 @@ void wdunlock(void) {
 	}
 }
 
-int wdlock(uint8_t runmode,uint32_t timeout) {
+uint8_t wdlock(uint8_t runmode,uint32_t timeout) {
 	pid_t ownerpid;
 	pid_t newownerpid;
 	uint32_t l;
@@ -666,79 +941,91 @@ int wdlock(uint8_t runmode,uint32_t timeout) {
 	lfd = open("." STR(APPNAME) ".lock",O_WRONLY|O_CREAT,0666);
 	if (lfd<0) {
 		mfs_errlog(LOG_ERR,"can't create lockfile in working directory");
-		return -1;
+		return 1;
 	}
 	ownerpid = mylock(lfd);
 	if (ownerpid<0) {
 		mfs_errlog(LOG_ERR,"fcntl error");
-		return -1;
+		return 1;
 	}
 	if (ownerpid>0) {
 		if (runmode==RM_TEST) {
 			fprintf(stderr,STR(APPNAME) " pid: %ld\n",(long)ownerpid);
-			return -1;
+			return 0;
 		}
 		if (runmode==RM_START) {
 			fprintf(stderr,"can't start: lockfile is already locked by another process\n");
-			return -1;
+			return 1;
 		}
 		if (runmode==RM_RELOAD) {
 			if (kill(ownerpid,SIGHUP)<0) {
 				mfs_errlog(LOG_WARNING,"can't send reload signal to lock owner");
-				return -1;
+				return 1;
 			}
-			fprintf(stderr,"reload signal has beed sent\n");
+			fprintf(stderr,"reload signal has been sent\n");
+			return 0;
+		}
+		if (runmode==RM_INFO) {
+#ifdef SIGINFO
+			if (kill(ownerpid,SIGINFO)<0) {
+#else
+			if (kill(ownerpid,SIGUSR1)<0) {
+#endif
+				mfs_errlog(LOG_WARNING,"can't send info signal to lock owner");
+				return 1;
+			}
+			fprintf(stderr,"info signal has been sent\n");
 			return 0;
 		}
 		if (runmode==RM_KILL) {
 			fprintf(stderr,"sending SIGKILL to lock owner (pid:%ld)\n",(long int)ownerpid);
 			if (kill(ownerpid,SIGKILL)<0) {
 				mfs_errlog(LOG_WARNING,"can't kill lock owner");
-				return -1;
+				return 1;
 			}
 		} else {
 			fprintf(stderr,"sending SIGTERM to lock owner (pid:%ld)\n",(long int)ownerpid);
 			if (kill(ownerpid,SIGTERM)<0) {
 				mfs_errlog(LOG_WARNING,"can't kill lock owner");
-				return -1;
+				return 1;
 			}
 		}
 		l=0;
-		fprintf(stderr,"waiting for termination ... ");
+		fprintf(stderr,"waiting for termination ");
 		fflush(stderr);
 		do {
 			newownerpid = mylock(lfd);
 			if (newownerpid<0) {
 				mfs_errlog(LOG_ERR,"fcntl error");
-				return -1;
+				return 1;
 			}
 			if (newownerpid>0) {
 				l++;
 				if (l>=timeout) {
 					syslog(LOG_ERR,"about %"PRIu32" seconds passed and lockfile is still locked - giving up",l);
-					fprintf(stderr,"giving up\n");
-					return -1;
+					fprintf(stderr,":giving up\n");
+					return 1;
 				}
 				if (l%10==0) {
 					syslog(LOG_WARNING,"about %"PRIu32" seconds passed and lock still exists",l);
-					fprintf(stderr,"%"PRIu32"s ",l);
+					fprintf(stderr,".");
 					fflush(stderr);
 				}
 				if (newownerpid!=ownerpid) {
 					fprintf(stderr,"\nnew lock owner detected\n");
 					if (runmode==RM_KILL) {
-						fprintf(stderr,"sending SIGKILL to lock owner (pid:%ld) ... ",(long int)newownerpid);
+						fprintf(stderr,":sending SIGKILL to lock owner (pid:%ld):",(long int)newownerpid);
 						fflush(stderr);
 						if (kill(newownerpid,SIGKILL)<0) {
 							mfs_errlog(LOG_WARNING,"can't kill lock owner");
-							return -1;
+							return 1;
 						}
 					} else {
-						fprintf(stderr,"sending SIGTERM to lock owner (pid:%ld) ... ",(long int)newownerpid);
+						fprintf(stderr,":sending SIGTERM to lock owner (pid:%ld):",(long int)newownerpid);
 						fflush(stderr);
 						if (kill(newownerpid,SIGTERM)<0) {
 							mfs_errlog(LOG_WARNING,"can't kill lock owner");
-							return -1;
+							return 1;
 						}
 					}
 					ownerpid = newownerpid;
@@ -750,120 +1037,32 @@ int wdlock(uint8_t runmode,uint32_t timeout) {
 		return 0;
 	}
 	if (runmode==RM_START || runmode==RM_RESTART) {
+		char pidstr[20];
+		l = snprintf(pidstr,20,"%ld\n",(long)(getpid()));
+		if (ftruncate(lfd,0)<0) {
+			fprintf(stderr,"can't truncate pidfile\n");
+		}
+		if (write(lfd,pidstr,l)!=(ssize_t)l) {
+			fprintf(stderr,"can't write pid to pidfile\n");
+		}
 		fprintf(stderr,"lockfile created and locked\n");
+	} else if (runmode==RM_TRY_RESTART) {
+		fprintf(stderr,"can't find process to restart\n");
+		return 1;
 	} else if (runmode==RM_STOP || runmode==RM_KILL) {
 		fprintf(stderr,"can't find process to terminate\n");
-		return -1;
+		return 0;
 	} else if (runmode==RM_RELOAD) {
 		fprintf(stderr,"can't find process to send reload signal\n");
-		return -1;
+		return 1;
+	} else if (runmode==RM_INFO) {
+		fprintf(stderr,"can't find process to send info signal\n");
+		return 1;
 	} else if (runmode==RM_TEST) {
 		fprintf(stderr,STR(APPNAME) " is not running\n");
+		return 1;
 	}
 	return 0;
-}
-
-int check_old_locks(uint8_t runmode,uint32_t timeout) {
-	char str[13];
-	uint32_t l;
-	pid_t ptk;
-	char *lockfname;
-
-	lockfname = cfg_getstr("LOCK_FILE",RUN_PATH "/" STR(APPNAME) ".lock");
-	lfd=open(lockfname,O_RDWR);
-	if (lfd<0) {
-		if (errno==ENOENT) {    // no old lock file
-			free(lockfname);
-			return 0;	// ok
-		}
-		mfs_arg_errlog(LOG_ERR,"open %s error",lockfname);
-		free(lockfname);
-		return -1;
-	}
-	if (lockf(lfd,F_TLOCK,0)<0) {
-		if (errno!=EAGAIN) {
-			mfs_arg_errlog(LOG_ERR,"lock %s error",lockfname);
-			free(lockfname);
-			return -1;
-		}
-		if (runmode==RM_START) {
-			mfs_syslog(LOG_ERR,"old lockfile is locked - can't start");
-			free(lockfname);
-			return -1;
-		}
-		if (runmode==RM_STOP || runmode==RM_KILL || runmode==RM_RESTART) {
-			fprintf(stderr,"old lockfile found - trying to kill previous instance using data from old lockfile\n");
-		} else if (runmode==RM_RELOAD) {
-			fprintf(stderr,"old lockfile found - sending reload signal using data from old lockfile\n");
-		}
-		l=read(lfd,str,13);
-		if (l==0 || l>=13) {
-			mfs_arg_syslog(LOG_ERR,"wrong pid in old lockfile %s",lockfname);
-			free(lockfname);
-			return -1;
-		}
-		str[l]=0;
-		ptk = strtol(str,NULL,10);
-		if (runmode==RM_RELOAD) {
-			if (kill(ptk,SIGHUP)<0) {
-				mfs_errlog(LOG_WARNING,"can't send reload signal");
-				free(lockfname);
-				return -1;
-			}
-			fprintf(stderr,"reload signal has beed sent\n");
-			return 0;
-		}
-		if (runmode==RM_KILL) {
-			fprintf(stderr,"sending SIGKILL to previous instance (pid:%ld)\n",(long int)ptk);
-			if (kill(ptk,SIGKILL)<0) {
-				mfs_errlog(LOG_WARNING,"can't kill previous process");
-				free(lockfname);
-				return -1;
-			}
-		} else {
-			fprintf(stderr,"sending SIGTERM to previous instance (pid:%ld)\n",(long int)ptk);
-			if (kill(ptk,SIGTERM)<0) {
-				mfs_errlog(LOG_WARNING,"can't kill previous process");
-				free(lockfname);
-				return -1;
-			}
-		}
-		l=0;
-		fprintf(stderr,"waiting for termination ...\n");
-		while (lockf(lfd,F_TLOCK,0)<0) {
-			if (errno!=EAGAIN) {
-				mfs_arg_errlog(LOG_ERR,"lock %s error",lockfname);
-				free(lockfname);
-				return -1;
-			}
-			sleep(1);
-			l++;
-			if (l>=timeout) {
-				mfs_arg_syslog(LOG_ERR,"about %"PRIu32" seconds passed and old lockfile is still locked - giving up",l);
-				free(lockfname);
-				return -1;
-			}
-			if (l%10==0) {
-				mfs_arg_syslog(LOG_WARNING,"about %"PRIu32" seconds passed and old lockfile is still locked",l);
-			}
-		}
-		fprintf(stderr,"terminated\n");
-	} else {
-		fprintf(stderr,"found unlocked old lockfile\n");
-		if (runmode==RM_RELOAD) {
-			fprintf(stderr,"can't obtain process id using old lockfile\n");
-			return 0;
-		}
-	}
-	fprintf(stderr,"removing old lockfile\n");
-	close(lfd);
-	unlink(lockfname);
-	free(lockfname);
-	return 0;
-}
-
-void remove_old_wdlock(void) {
-	unlink(".lock_" STR(APPNAME));
 }
 
 void makedaemon() {
@@ -968,13 +1167,15 @@ void createpath(const char *filename) {
 
 void usage(const char *appname) {
 	printf(
-"usage: %s [-vdu] [-t locktimeout] [-c cfgfile] [start|stop|restart|reload|test]\n"
+"usage: %s [-vfun] [-t locktimeout] [-c cfgfile] " MODULE_OPTIONS_SYNOPIS "[start|stop|restart|reload|info|test|kill]\n"
 "\n"
 "-v : print version number and exit\n"
-"-d : run in foreground\n"
+"-f : run in foreground\n"
 "-u : log undefined config variables\n"
+"-n : do not attempt to increase limit of core dump size\n"
 "-t locktimeout : how long wait for lockfile\n"
 "-c cfgfile : use given config file\n"
+MODULE_OPTIONS_DESC
 	,appname);
 	exit(1);
 }
@@ -984,11 +1185,13 @@ int main(int argc,char **argv) {
 //	char *lockfname;
 	char *wrkdir;
 	char *cfgfile;
+	char *ocfgfile;
 	char *appname;
 	int ch;
 	uint8_t runmode;
 	int rundaemon,logundefined;
 	int lockmemory;
+	int forcecoredump;
 	int32_t nicelevel;
 	uint32_t locktimeout;
 	int fd;
@@ -1002,10 +1205,11 @@ int main(int argc,char **argv) {
 	cfgfile=strdup(ETC_PATH "/mfs/" STR(APPNAME) ".cfg");
 	passert(cfgfile);
 	if ((fd = open(cfgfile,O_RDONLY))<0 && errno==ENOENT) {
-		free(cfgfile);
-		cfgfile=strdup(ETC_PATH "/" STR(APPNAME) ".cfg");
-		passert(cfgfile);
-		if ((fd = open(cfgfile,O_RDONLY))>=0) {
+		ocfgfile=strdup(ETC_PATH "/" STR(APPNAME) ".cfg");
+		passert(ocfgfile);
+		if ((fd = open(ocfgfile,O_RDONLY))>=0) {
+			free(cfgfile);
+			cfgfile = ocfgfile;
 			movewarning = 1;
 		}
 	}
@@ -1017,21 +1221,19 @@ int main(int argc,char **argv) {
 	runmode = RM_RESTART;
 	logundefined = 0;
 	lockmemory = 0;
+	forcecoredump = 1;
 	appname = argv[0];
 
-	while ((ch = getopt(argc, argv, "uvdfsc:t:h?")) != -1) {
+	while ((ch = getopt(argc, argv, "nuvfdc:t:h?" MODULE_OPTIONS_GETOPT)) != -1) {
 		switch(ch) {
 			case 'v':
-				printf("version: %u.%u.%u\n",VERSMAJ,VERSMID,VERSMIN);
+				printf("version: %s\n",VERSSTR);
 				return 0;
 			case 'd':
-				rundaemon=0;
-				break;
+				printf("option '-d' is deprecated - use '-f' instead\n");
+				// no break on purpose
 			case 'f':
-				runmode=RM_START;
-				break;
-			case 's':
-				runmode=RM_STOP;
+				rundaemon=0;
 				break;
 			case 't':
 				locktimeout=strtoul(optarg,NULL,10);
@@ -1045,6 +1247,10 @@ int main(int argc,char **argv) {
 			case 'u':
 				logundefined=1;
 				break;
+			case 'n':
+				forcecoredump = 0;
+				break;
+			MODULE_OPTIONS_SWITCH
 			default:
 				usage(appname);
 				return 1;
@@ -1059,9 +1265,13 @@ int main(int argc,char **argv) {
 			runmode = RM_STOP;
 		} else if (strcasecmp(argv[0],"restart")==0) {
 			runmode = RM_RESTART;
+		} else if (strcasecmp(argv[0],"try-restart")==0) {
+			runmode = RM_TRY_RESTART;
 		} else if (strcasecmp(argv[0],"reload")==0) {
 			runmode = RM_RELOAD;
-		} else if (strcasecmp(argv[0],"test")==0) {
+		} else if (strcasecmp(argv[0],"info")==0) {
+			runmode = RM_INFO;
+		} else if (strcasecmp(argv[0],"test")==0 || strcasecmp(argv[0],"status")==0) {
 			runmode = RM_TEST;
 		} else if (strcasecmp(argv[0],"kill")==0) {
 			runmode = RM_KILL;
@@ -1078,10 +1288,10 @@ int main(int argc,char **argv) {
 		mfs_syslog(LOG_WARNING,"default sysconf path has changed - please move " STR(APPNAME) ".cfg from "ETC_PATH"/ to "ETC_PATH"/mfs/");
 	}
 
-	if ((runmode==RM_START || runmode==RM_RESTART) && rundaemon) {
-		makedaemon();
-	} else {
-		if (runmode==RM_START || runmode==RM_RESTART) {
+	if (runmode==RM_START || runmode==RM_RESTART || runmode==RM_TRY_RESTART) {
+		if (rundaemon) {
+			makedaemon();
+		} else {
 			set_signal_handlers(0);
 		}
 	}
@@ -1115,11 +1325,30 @@ int main(int argc,char **argv) {
 #endif
 	}
 
-	if (runmode==RM_START || runmode==RM_RESTART) {
+	if (runmode==RM_START || runmode==RM_RESTART || runmode==RM_TRY_RESTART) {
 		rls.rlim_cur = MFSMAXFILES;
 		rls.rlim_max = MFSMAXFILES;
 		if (setrlimit(RLIMIT_NOFILE,&rls)<0) {
-			syslog(LOG_NOTICE,"can't change open files limit to %u",MFSMAXFILES);
+			syslog(LOG_NOTICE,"can't change open files limit to: %u (trying to set smaller value)",MFSMAXFILES);
+			if (getrlimit(RLIMIT_NOFILE,&rls)>=0) {
+				uint32_t limit;
+				if (rls.rlim_max > MFSMAXFILES) {
+					limit = MFSMAXFILES;
+				} else {
+					limit = rls.rlim_max;
+				}
+				while (limit>1024) {
+					rls.rlim_cur = limit;
+					if (setrlimit(RLIMIT_NOFILE,&rls)>=0) {
+						mfs_arg_syslog(LOG_NOTICE,"open files limit has been set to: %"PRIu32,limit);
+						break;
+					}
+					limit *= 3;
+					limit /= 4;
+				}
+			}
+		} else {
+			mfs_arg_syslog(LOG_NOTICE,"open files limit has been set to: %u",MFSMAXFILES);
 		}
 
 		lockmemory = cfg_getnum("LOCK_MEMORY",0);
@@ -1137,7 +1366,7 @@ int main(int argc,char **argv) {
 	changeugid();
 
 	wrkdir = cfg_getstr("DATA_PATH",DATA_PATH);
-	if (runmode==RM_START || runmode==RM_RESTART) {
+	if (runmode==RM_START || runmode==RM_RESTART || runmode==RM_TRY_RESTART) {
 		fprintf(stderr,"working directory: %s\n",wrkdir);
 	}
 
@@ -1155,8 +1384,8 @@ int main(int argc,char **argv) {
 
 	umask(cfg_getuint32("FILE_UMASK",027)&077);
 
-	/* for upgrading from previous versions of MFS */
-	if (check_old_locks(runmode,locktimeout)<0) {
+	ch = wdlock(runmode,locktimeout);
+	if (ch) {
 		if (rundaemon) {
 			fputc(0,stderr);
 			close_msg_channel();
@@ -1164,23 +1393,10 @@ int main(int argc,char **argv) {
 		closelog();
 		free(logappname);
 		wdunlock();
-		return 1;
+		return ch;
 	}
 
-	if (wdlock(runmode,locktimeout)<0) {
-		if (rundaemon) {
-			fputc(0,stderr);
-			close_msg_channel();
-		}
-		closelog();
-		free(logappname);
-		wdunlock();
-		return 1;
-	}
-
-	remove_old_wdlock();
-
-	if (runmode==RM_STOP || runmode==RM_KILL || runmode==RM_RELOAD || runmode==RM_TEST) {
+	if (runmode==RM_STOP || runmode==RM_KILL || runmode==RM_RELOAD || runmode==RM_INFO || runmode==RM_TEST) {
 		if (rundaemon) {
 			close_msg_channel();
 		}
@@ -1221,18 +1437,48 @@ int main(int argc,char **argv) {
 		mfs_syslog(LOG_WARNING,"memory lock not supported !!!");
 	}
 #endif
+
+	if (forcecoredump) {
+		rls.rlim_cur = RLIM_INFINITY;
+		rls.rlim_max = RLIM_INFINITY;
+		setrlimit(RLIMIT_CORE,&rls);
+#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
+		prctl(PR_SET_DUMPABLE,1);
+#endif
+	}
+
+/* glibc malloc tuning */
+#if defined(USE_PTHREADS) && defined(M_ARENA_MAX) && defined(M_ARENA_TEST) && defined(HAVE_MALLOPT)
+	if (cfg_getuint8("CHANGE_GLIBC_MALLOC_ARENAS",1)==1) {
+		if (!getenv("MALLOC_ARENA_MAX")) {
+			mfs_syslog(LOG_NOTICE,"setting glibc malloc arena max to 8");
+			mallopt(M_ARENA_MAX, 8);
+		}
+		if (!getenv("MALLOC_ARENA_TEST")) {
+			mfs_syslog(LOG_NOTICE,"setting glibc malloc arena test to 1");
+			mallopt(M_ARENA_TEST, 1);
+		}
+	} else {
+		mfs_syslog(LOG_NOTICE,"setting glibc malloc arenas turned off");
+	}
+#endif /* glibc malloc tuning */
+
+	syslog(LOG_NOTICE,"monotonic clock function: %s",monotonic_method());
+	syslog(LOG_NOTICE,"monotonic clock speed: %"PRIu32" ops / 10 mili seconds",monotonic_speed());
+
 	fprintf(stderr,"initializing %s modules ...\n",logappname);
 
 	if (initialize()) {
-		if (getrlimit(RLIMIT_NOFILE,&rls)==0) {
-			syslog(LOG_NOTICE,"open files limit: %lu",(unsigned long)(rls.rlim_cur));
-		}
+//		if (getrlimit(RLIMIT_NOFILE,&rls)==0) {
+//			syslog(LOG_NOTICE,"open files limit: %lu",(unsigned long)(rls.rlim_cur));
+//		}
 		fprintf(stderr,"%s daemon initialized properly\n",logappname);
 		if (rundaemon) {
 			close_msg_channel();
 		}
 		if (initialize_late()) {
 			mainloop();
+			mfs_syslog(LOG_NOTICE,"exited from main loop");
 			ch=0;
 		} else {
 			ch=1;
@@ -1245,6 +1491,7 @@ int main(int argc,char **argv) {
 		}
 		ch=1;
 	}
+	mfs_syslog(LOG_NOTICE,"exititng ...");
 	destruct();
 	free_all_registered_entries();
 	signal_cleanup();
@@ -1253,5 +1500,6 @@ int main(int argc,char **argv) {
 	closelog();
 	free(logappname);
 	wdunlock();
+	mfs_arg_syslog(LOG_NOTICE,"process exited successfully (status:%d)",ch);
 	return ch;
 }

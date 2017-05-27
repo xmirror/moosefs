@@ -1,19 +1,21 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
 #include <stdio.h>
@@ -24,12 +26,13 @@
 
 typedef struct _statsnode {
 	uint64_t counter;
-	uint8_t active;
+	uint8_t printflag;
 	uint8_t absolute;
 	char *name;
 	char *fullname;
 	uint32_t nleng;	// : strlen(name)
 	uint32_t fnleng; // : strlen(fullname)
+	struct _statsnode *parent;
 	struct _statsnode *firstchild;
 	struct _statsnode *nextsibling;
 } statsnode;
@@ -39,15 +42,59 @@ static uint32_t allactiveplengs = 0;
 static uint32_t activenodes = 0;
 static pthread_mutex_t glock = PTHREAD_MUTEX_INITIALIZER;
 
-void stats_lock(void) {
+void stats_counter_add(void *node,uint64_t delta) {
+	statsnode *sn = (statsnode*)node;
 	pthread_mutex_lock(&glock);
-}
-
-void stats_unlock(void) {
+	while (sn) {
+		sn->counter += delta;
+		if (sn->absolute) {
+			break;
+		}
+		sn = sn->parent;
+	}
 	pthread_mutex_unlock(&glock);
 }
 
-void* stats_get_subnode(void *node,const char *name,uint8_t absolute) {
+void stats_counter_sub(void *node,uint64_t delta) {
+	statsnode *sn = (statsnode*)node;
+	pthread_mutex_lock(&glock);
+	while (sn) {
+		sn->counter -= delta;
+		if (sn->absolute) {
+			break;
+		}
+		sn = sn->parent;
+	}
+	pthread_mutex_unlock(&glock);
+}
+
+void stats_counter_inc(void *node) {
+	statsnode *sn = (statsnode*)node;
+	pthread_mutex_lock(&glock);
+	while (sn) {
+		sn->counter++;
+		if (sn->absolute) {
+			break;
+		}
+		sn = sn->parent;
+	}
+	pthread_mutex_unlock(&glock);
+}
+
+void stats_counter_dec(void *node) {
+	statsnode *sn = (statsnode*)node;
+	pthread_mutex_lock(&glock);
+	while (sn) {
+		sn->counter--;
+		if (sn->absolute) {
+			break;
+		}
+		sn = sn->parent;
+	}
+	pthread_mutex_unlock(&glock);
+}
+
+void* stats_get_subnode(void *node,const char *name,uint8_t absolute,uint8_t printflag) {
 	statsnode *sn = (statsnode*)node;
 	statsnode *a;
 	pthread_mutex_lock(&glock);
@@ -61,7 +108,7 @@ void* stats_get_subnode(void *node,const char *name,uint8_t absolute) {
 	a->nextsibling = sn?sn->firstchild:firstnode;
 	a->firstchild = NULL;
 	a->counter = 0;
-	a->active = 0;
+	a->printflag = printflag;
 	a->absolute = absolute;
 	a->name = strdup(name);
 	a->nleng = strlen(name);
@@ -83,20 +130,13 @@ void* stats_get_subnode(void *node,const char *name,uint8_t absolute) {
 	} else {
 		firstnode = a;
 	}
-	pthread_mutex_unlock(&glock);
-	return a;
-}
-
-uint64_t* stats_get_counterptr(void *node) {
-	statsnode *sn = (statsnode*)node;
-	pthread_mutex_lock(&glock);
-	if (sn->active==0) {
-		sn->active = 1;
-		allactiveplengs += sn->fnleng;
+	a->parent = sn;
+	if (printflag) {
 		activenodes++;
+		allactiveplengs+=a->fnleng;
 	}
 	pthread_mutex_unlock(&glock);
-	return &(sn->counter);
+	return a;
 }
 
 static inline void stats_reset(statsnode *n) {
@@ -121,8 +161,13 @@ void stats_reset_all(void) {
 static inline uint32_t stats_print_values(char *buff,uint32_t maxleng,statsnode *n) {
 	statsnode *a;
 	uint32_t l;
-	if (n->active) {
-		l = snprintf(buff,maxleng,"%s: %"PRIu64"\n",n->fullname,n->counter);
+//	printf("node: %p ; name: %s ; printflag: %u ; absolute: %u ; counter: %"PRIu64"\n",n,n->fullname,n->printflag,n->absolute,n->counter);
+	if (n->printflag) {
+		if (n->absolute) {
+			l = snprintf(buff,maxleng,"%s: [%"PRIu64"]\n",n->fullname,n->counter);
+		} else {
+			l = snprintf(buff,maxleng,"%s: %"PRIu64"\n",n->fullname,n->counter);
+		}
 	} else {
 		l = 0;
 	}
@@ -149,7 +194,7 @@ static inline uint32_t stats_print_total(char *buff,uint32_t maxleng) {
 void stats_show_all(char **buff,uint32_t *leng) {
 	uint32_t rl;
 	pthread_mutex_lock(&glock);
-	rl = allactiveplengs + 23*activenodes + 1;
+	rl = allactiveplengs + 50*activenodes;
 	*buff = malloc(rl);
 	if (*buff) {
 		*leng = stats_print_total(*buff,rl);

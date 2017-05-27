@@ -1,26 +1,32 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/poll.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -34,20 +40,35 @@
 #include <errno.h>
 
 #include "sockets.h"
-/* Acid's simple socket library - ver 2.0 */
+#include "clocks.h"
+
+/* Acid's simple socket library - ver 4.0 */
 
 /* ---------------SOCK ADDR--------------- */
+
+#define RRDNS_MAXADDR 256
+
+typedef struct sockets_rrdns {
+	uint32_t iptab[RRDNS_MAXADDR];
+	uint16_t porttab[RRDNS_MAXADDR];
+	uint16_t datacnt,datapos;
+} sockets_rrdns;
 
 static inline int sockaddrnumfill(struct sockaddr_in *sa,uint32_t ip,uint16_t port) {
 	memset(sa,0,sizeof(struct sockaddr_in));
 	sa->sin_family = AF_INET;
 	sa->sin_port = htons(port);
 	sa->sin_addr.s_addr = htonl(ip);
+#ifdef HAVE_SOCKADDR_SIN_LEN
+	sa->sin_len = sizeof(struct sockaddr_in);
+#endif
 	return 0;
 }
 
+
 static inline int sockaddrfill(struct sockaddr_in *sa,const char *hostname,const char *service,int family,int socktype,int passive) {
 	struct addrinfo hints, *res, *reshead;
+	uint32_t n,r;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = family;
 	hints.ai_socktype = socktype;
@@ -63,16 +84,35 @@ static inline int sockaddrfill(struct sockaddr_in *sa,const char *hostname,const
 	if (getaddrinfo(hostname,service,&hints,&reshead)) {
 		return -1;
 	}
+
+	n = 0;
 	for (res = reshead ; res ; res=res->ai_next) {
 		if (res->ai_family==family && res->ai_socktype==socktype && res->ai_addrlen==sizeof(struct sockaddr_in)) {
-			*sa = *((struct sockaddr_in*)(res->ai_addr));
-			freeaddrinfo(reshead);
-			return 0;
+			n++;
+		}
+	}
+
+	if (n>0) {
+		r = random()%n;
+	} else {
+		r = 0;
+	}
+
+	for (res = reshead ; res ; res=res->ai_next) {
+		if (res->ai_family==family && res->ai_socktype==socktype && res->ai_addrlen==sizeof(struct sockaddr_in)) {
+			if (r==0) {
+				*sa = *((struct sockaddr_in*)(res->ai_addr));
+				freeaddrinfo(reshead);
+				return 0;
+			} else {
+				r--;
+			}
 		}
 	}
 	freeaddrinfo(reshead);
 	return -1;
 }
+
 
 static inline int sockresolve(const char *hostname,const char *service,uint32_t *ip,uint16_t *port,int family,int socktype,int passive) {
 	struct sockaddr_in sa;
@@ -88,6 +128,21 @@ static inline int sockresolve(const char *hostname,const char *service,uint32_t 
 	return 0;
 }
 
+static inline int sockaddrpathfill(struct sockaddr_un *sa,const char *path) {
+	size_t pl;
+	pl = strlen(path);
+	if (pl >= sizeof(sa->sun_path)) { // overflow
+		return -1;
+	}
+	memset(sa,0,sizeof(struct sockaddr_un));
+	sa->sun_family = AF_LOCAL;
+	memcpy(sa->sun_path,path,pl);
+	sa->sun_path[pl]='\0';
+	return 0;
+}
+
+/* ---------- SOCKET UNIVERSAL ----------- */
+
 static inline int socknonblock(int sock) {
 #ifdef O_NONBLOCK
 	int flags = fcntl(sock, F_GETFL, 0);
@@ -99,6 +154,275 @@ static inline int socknonblock(int sock) {
 	int yes = 1;
 	return ioctl(sock, FIONBIO, &yes);
 #endif
+}
+
+static inline int sockgetstatus(int sock) {
+	socklen_t arglen = sizeof(int);
+	int rc = 0;
+	if (getsockopt(sock,SOL_SOCKET,SO_ERROR,(void *)&rc,&arglen) < 0) {
+		rc=errno;
+	}
+	errno=rc;
+	return rc;
+}
+
+/* ----------- STRAM UNIVERSAL ----------- */
+
+static inline int32_t streamtoread(int sock,void *buff,uint32_t leng,uint32_t msecto) {
+	uint32_t rcvd=0;
+	int i;
+	struct pollfd pfd;
+	double s,c;
+	uint32_t msecpassed;
+
+	s = 0.0;
+	pfd.fd = sock;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	while (1) {
+		i = read(sock,((uint8_t*)buff)+rcvd,leng-rcvd);
+		if (i==0) {
+			return rcvd;
+		}
+		if (i>0) {
+		       rcvd += i;
+		} else if (ERRNO_ERROR) {
+			return -1;
+		}
+		if (pfd.revents & POLLHUP) {
+			return rcvd;
+		}
+		if (rcvd>=leng) {
+			break;
+		}
+		if (s==0.0) {
+			s = monotonic_seconds();
+			msecpassed = 0;
+		} else {
+			c = monotonic_seconds();
+			msecpassed = (c-s)*1000.0;
+			if (msecpassed>=msecto) {
+				errno = ETIMEDOUT;
+				return -1;
+			}
+		}
+		pfd.revents = 0;
+		if (poll(&pfd,1,msecto-msecpassed)<0) {
+			if (errno!=EINTR) {
+				return -1;
+			} else {
+				continue;
+			}
+		}
+		if (pfd.revents & POLLERR) {
+			return -1;
+		}
+		if ((pfd.revents & POLLIN)==0) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+	}
+	return rcvd;
+}
+
+static inline int32_t streamtowrite(int sock,const void *buff,uint32_t leng,uint32_t msecto) {
+	uint32_t sent=0;
+	int32_t i;
+	struct pollfd pfd;
+	double s,c;
+	uint32_t msecpassed;
+
+	s = 0.0;
+	pfd.fd = sock;
+	pfd.events = POLLOUT;
+	pfd.revents = 0;
+	while (1) {
+		i = write(sock,((uint8_t*)buff)+sent,leng-sent);
+		if (i==0) {
+			return 0;
+		}
+		if (i>0) {
+		       sent += i;
+		} else if (ERRNO_ERROR) {
+			return -1;
+		}
+		if (sent>=leng) {
+			break;
+		}
+		if (s==0.0) {
+			s = monotonic_seconds();
+			msecpassed = 0;
+		} else {
+			c = monotonic_seconds();
+			msecpassed = (c-s)*1000.0;
+			if (msecpassed>=msecto) {
+				errno = ETIMEDOUT;
+				return -1;
+			}
+		}
+		pfd.revents = 0;
+		if (poll(&pfd,1,msecto-msecpassed)<0) {
+			if (errno!=EINTR) {
+				return -1;
+			} else {
+				continue;
+			}
+		}
+		if (pfd.revents & (POLLHUP|POLLERR)) {
+			return -1;
+		}
+		if ((pfd.revents & POLLOUT)==0) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+	}
+	return sent;
+}
+
+static inline int32_t streamtoforward(int srcsock,int dstsock,void *buff,uint32_t leng,uint32_t rcvd,uint32_t sent,uint32_t msecto) {
+	int32_t i;
+	struct pollfd pfd[2];
+	double s,c;
+	uint32_t msecpassed;
+	s = 0.0;
+	pfd[0].fd = srcsock;
+	pfd[0].events = POLLIN;
+	pfd[0].revents = 0;
+	pfd[1].fd = dstsock;
+	pfd[1].events = POLLOUT;
+	pfd[1].revents = 0;
+	while (1) {
+		if (rcvd<leng) {
+			i = read(srcsock,((uint8_t*)buff)+rcvd,leng-rcvd);
+			if (i==0) {
+				leng = rcvd;
+			}
+			if (i>0) {
+			       rcvd += i;
+			} else if (ERRNO_ERROR) {
+				return -1;
+			}
+		}
+		if (pfd[0].revents & POLLHUP) {
+			leng = rcvd;
+		}
+		if (rcvd>sent) {
+			i = write(dstsock,((uint8_t*)buff)+sent,rcvd-sent);
+			if (i>0) {
+			       sent += i;
+			} else if (ERRNO_ERROR) {
+				return -1;
+			}
+		}
+		if (rcvd>=leng && sent>=leng) {
+			break;
+		}
+		if (s==0.0) {
+			s = monotonic_seconds();
+			msecpassed = 0;
+		} else {
+			c = monotonic_seconds();
+			msecpassed = (c-s)*1000.0;
+			if (msecpassed>=msecto) {
+				errno = ETIMEDOUT;
+				return -1;
+			}
+		}
+		pfd[0].revents = 0;
+		pfd[1].revents = 0;
+		if (rcvd==leng) { // only wait for write
+			if (poll(pfd+1,1,msecto-msecpassed)<0) {
+				if (errno!=EINTR) {
+					return -1;
+				} else {
+					continue;
+				}
+			}
+			if (pfd[1].revents & (POLLERR|POLLHUP)) {
+				return -1;
+			}
+			pfd[0].revents = 0;
+		} else if (rcvd==sent) { // only wait for read
+			if (poll(pfd,1,msecto-msecpassed)<0) {
+				if (errno!=EINTR) {
+					return -1;
+				} else {
+					continue;
+				}
+			}
+			if (pfd[0].revents & POLLERR) {
+				return -1;
+			}
+			pfd[1].revents = 0;
+		} else {
+			if (poll(pfd,2,msecto-msecpassed)<0) {
+				if (errno!=EINTR) {
+					return -1;
+				} else {
+					continue;
+				}
+			}
+			if ((pfd[0].revents & POLLERR) || (pfd[1].revents & (POLLERR|POLLHUP))) {
+				return -1;
+			}
+		}
+		if ((pfd[0].revents & (POLLIN|POLLHUP))==0 && (pfd[1].revents & POLLOUT)==0) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+	}
+	return leng;
+}
+
+static inline int streamtoaccept(int lsock,uint32_t msecto) {
+	int i;
+	double s,c;
+	uint32_t msecpassed;
+	struct pollfd pfd;
+	i = accept(lsock,(struct sockaddr *)NULL,0);
+	if (i>=0) {
+		return i;
+	} else if (ERRNO_ERROR) {
+		return -1;
+	}
+	s = monotonic_seconds();
+	msecpassed = 0;
+	while (1) {
+		pfd.fd = lsock;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd,1,msecto-msecpassed)>=0) {
+			break;
+		}
+		if (errno==EINTR) {
+			c = monotonic_seconds();
+			msecpassed = (c-s)*1000.0;
+			if (msecpassed>=msecto) {
+				errno = ETIMEDOUT;
+				return -1;
+			}
+			continue;
+		} else {
+			return -1;
+		}
+	}
+	if (pfd.revents & (POLLHUP|POLLERR)) {
+		return -1;
+	}
+	if (pfd.revents & POLLIN) {
+		return accept(lsock,(struct sockaddr *)NULL,0);
+	}
+	errno = ETIMEDOUT;
+	return -1;
+}
+
+static inline int streamaccept(int lsock) {
+	int sock;
+	sock=accept(lsock,(struct sockaddr *)NULL,0);
+	if (sock<0) {
+		return -1;
+	}
+	return sock;
 }
 
 /* ----------------- TCP ----------------- */
@@ -128,6 +452,11 @@ int tcpsocket(void) {
 int tcpnonblock(int sock) {
 	return socknonblock(sock);
 }
+
+int tcpgetstatus(int sock) {
+	return sockgetstatus(sock);
+}
+
 
 int tcpresolve(const char *hostname,const char *service,uint32_t *ip,uint16_t *port,int passive) {
 	return sockresolve(hostname,service,ip,port,AF_INET,SOCK_STREAM,passive);
@@ -229,15 +558,35 @@ int tcpstrtoconnect(int sock,const char *hostname,const char *service,uint32_t m
 		return 0;
 	}
 	if (errno == EINPROGRESS) {
+		double s,c;
+		uint32_t msecpassed;
 		struct pollfd pfd;
-		pfd.fd = sock;
-		pfd.events = POLLOUT;
-		pfd.revents = 0;
-		if (poll(&pfd,1,msecto)<0) {
+		s = monotonic_seconds();
+		msecpassed = 0;
+		while (1) {
+			pfd.fd = sock;
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+			if (poll(&pfd,1,msecto-msecpassed)>=0) {
+				break;
+			}
+			if (errno==EINTR) {
+				c = monotonic_seconds();
+				msecpassed = (c-s)*1000.0;
+				if (msecpassed>=msecto) {
+					errno = ETIMEDOUT;
+					return -1;
+				}
+				continue;
+			} else {
+				return -1;
+			}
+		}
+		if (pfd.revents & (POLLHUP|POLLERR)) {
 			return -1;
 		}
 		if (pfd.revents & POLLOUT) {
-			return tcpgetstatus(sock);
+			return sockgetstatus(sock);
 		}
 		errno=ETIMEDOUT;
 	}
@@ -254,29 +603,39 @@ int tcpnumtoconnect(int sock,uint32_t ip,uint16_t port,uint32_t msecto) {
 		return 0;
 	}
 	if (errno == EINPROGRESS) {
+		double s,c;
+		uint32_t msecpassed;
 		struct pollfd pfd;
-		pfd.fd = sock;
-		pfd.events = POLLOUT;
-		pfd.revents = 0;
-		if (poll(&pfd,1,msecto)<0) {
+		s = monotonic_seconds();
+		msecpassed = 0;
+		while (1) {
+			pfd.fd = sock;
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+			if (poll(&pfd,1,msecto-msecpassed)>=0) {
+				break;
+			}
+			if (errno==EINTR) {
+				c = monotonic_seconds();
+				msecpassed = (c-s)*1000.0;
+				if (msecpassed>=msecto) {
+					errno = ETIMEDOUT;
+					return -1;
+				}
+				continue;
+			} else {
+				return -1;
+			}
+		}
+		if (pfd.revents & (POLLHUP|POLLERR)) {
 			return -1;
 		}
 		if (pfd.revents & POLLOUT) {
-			return tcpgetstatus(sock);
+			return sockgetstatus(sock);
 		}
 		errno=ETIMEDOUT;
 	}
 	return -1;
-}
-
-int tcpgetstatus(int sock) {
-	socklen_t arglen = sizeof(int);
-	int rc = 0;
-	if (getsockopt(sock,SOL_SOCKET,SO_ERROR,(void *)&rc,&arglen) < 0) {
-		rc=errno;
-	}
-	errno=rc;
-	return rc;
 }
 
 int tcpstrlisten(int sock,const char *hostname,const char *service,uint16_t queue) {
@@ -303,15 +662,6 @@ int tcpnumlisten(int sock,uint32_t ip,uint16_t port,uint16_t queue) {
 		return -1;
 	}
 	return 0;
-}
-
-int tcpaccept(int lsock) {
-	int sock;
-	sock=accept(lsock,(struct sockaddr *)NULL,0);
-	if (sock<0) {
-		return -1;
-	}
-	return sock;
 }
 
 int tcpgetpeer(int sock,uint32_t *ip,uint16_t *port) {
@@ -352,6 +702,26 @@ int tcpclose(int sock) {
 	return close(sock);
 }
 
+int32_t tcptoread(int sock,void *buff,uint32_t leng,uint32_t msecto) {
+	return streamtoread(sock,buff,leng,msecto);
+}
+
+int32_t tcptowrite(int sock,const void *buff,uint32_t leng,uint32_t msecto) {
+	return streamtowrite(sock,buff,leng,msecto);
+}
+
+int32_t tcptoforward(int srcsock,int dstsock,void *buff,uint32_t leng,uint32_t rcvd,uint32_t sent,uint32_t msecto) {
+	return streamtoforward(srcsock,dstsock,buff,leng,rcvd,sent,msecto);
+}
+
+int tcptoaccept(int lsock,uint32_t msecto) {
+	return streamtoaccept(lsock,msecto);
+}
+
+int tcpaccept(int lsock) {
+	return streamaccept(lsock);
+}
+
 /*
 int32_t tcpread(int sock,void *buff,uint32_t leng) {
 	uint32_t rcvd=0;
@@ -380,71 +750,6 @@ int32_t tcpwrite(int sock,const void *buff,uint32_t leng) {
 }
 */
 
-int32_t tcptoread(int sock,void *buff,uint32_t leng,uint32_t msecto) {
-	uint32_t rcvd=0;
-	int i;
-	struct pollfd pfd;
-	pfd.fd = sock;
-	pfd.events = POLLIN;
-	while (rcvd<leng) {
-		pfd.revents = 0;
-		if (poll(&pfd,1,msecto)<0) {
-			return -1;
-		}
-		if (pfd.revents & POLLIN) {
-			i = read(sock,((uint8_t*)buff)+rcvd,leng-rcvd);
-			if (i<=0) {
-				return i;
-			}
-			rcvd+=i;
-		} else {
-			errno = ETIMEDOUT;
-			return -1;
-		}
-	}
-	return rcvd;
-}
-
-int32_t tcptowrite(int sock,const void *buff,uint32_t leng,uint32_t msecto) {
-	uint32_t sent=0;
-	int i;
-	struct pollfd pfd;
-	pfd.fd = sock;
-	pfd.events = POLLOUT;
-	while (sent<leng) {
-		pfd.revents = 0;
-		if (poll(&pfd,1,msecto)<0) {
-			return -1;
-		}
-		if (pfd.revents & POLLOUT) {
-			i = write(sock,((uint8_t*)buff)+sent,leng-sent);
-			if (i<=0) {
-				return i;
-			}
-			sent+=i;
-		} else {
-			errno = ETIMEDOUT;
-			return -1;
-		}
-	}
-	return sent;
-}
-
-int tcptoaccept(int sock,uint32_t msecto) {
-	struct pollfd pfd;
-	pfd.fd = sock;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
-	if (poll(&pfd,1,msecto)<0) {
-		return -1;
-	}
-	if (pfd.revents & POLLIN) {
-		return accept(sock,(struct sockaddr *)NULL,0);
-	}
-	errno = ETIMEDOUT;
-	return -1;
-}
-
 /* ----------------- UDP ----------------- */
 
 int udpsocket(void) {
@@ -454,6 +759,11 @@ int udpsocket(void) {
 int udpnonblock(int sock) {
 	return socknonblock(sock);
 }
+
+int udpgetstatus(int sock) {
+	return sockgetstatus(sock);
+}
+
 
 int udpresolve(const char *hostname,const char *service,uint32_t *ip,uint16_t *port,int passive) {
 	return sockresolve(hostname,service,ip,port,AF_INET,SOCK_DGRAM,passive);
@@ -503,3 +813,116 @@ int udpread(int sock,uint32_t *ip,uint16_t *port,void *buff,uint16_t leng) {
 int udpclose(int sock) {
 	return close(sock);
 }
+
+/* ----------------- UNIX ---------------- */
+
+int unixsocket(void) {
+	return socket(AF_UNIX,SOCK_STREAM,0);
+}
+
+int unixnonblock(int sock) {
+	return socknonblock(sock);
+}
+
+int unixgetstatus(int sock) {
+	return sockgetstatus(sock);
+}
+
+int unixconnect(int sock,const char *path) {
+	struct sockaddr_un sa;
+
+	if (sockaddrpathfill(&sa,path)<0) {
+		return -1;
+	}
+	if (connect(sock,(struct sockaddr *)&sa,sizeof(struct sockaddr_un)) >= 0) {
+		return 0;
+	}
+	if (errno == EINPROGRESS) {
+		return 1;
+	}
+	return -1;
+}
+
+int unixtoconnect(int sock,const char *path,uint32_t msecto) {
+	struct sockaddr_un sa;
+
+	if (socknonblock(sock)<0) {
+		return -1;
+	}
+	if (sockaddrpathfill(&sa,path)<0) {
+		return -1;
+	}
+	if (connect(sock,(struct sockaddr *)&sa,sizeof(struct sockaddr_un)) >= 0) {
+		return 0;
+	}
+	if (errno == EINPROGRESS) {
+		double s,c;
+		uint32_t msecpassed;
+		struct pollfd pfd;
+		s = monotonic_seconds();
+		msecpassed = 0;
+		while (1) {
+			pfd.fd = sock;
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+			if (poll(&pfd,1,msecto-msecpassed)>=0) {
+				break;
+			}
+			if (errno==EINTR) {
+				c = monotonic_seconds();
+				msecpassed = (c-s)*1000.0;
+				if (msecpassed>=msecto) {
+					errno = ETIMEDOUT;
+					return -1;
+				}
+				continue;
+			} else {
+				return -1;
+			}
+		}
+		if (pfd.revents & (POLLHUP|POLLERR)) {
+			return -1;
+		}
+		if (pfd.revents & POLLOUT) {
+			return sockgetstatus(sock);
+		}
+		errno=ETIMEDOUT;
+	}
+	return -1;
+}
+
+int unixlisten(int sock,const char *path,int queue) {
+	struct sockaddr_un sa;
+
+	if (sockaddrpathfill(&sa,path)<0) {
+		return -1;
+	}
+	if (bind(sock,(struct sockaddr *)&sa,sizeof(struct sockaddr_un)) < 0) {
+		return -1;
+	}
+	if (listen(sock,queue)<0) {
+		return -1;
+	}
+	return 0;
+}
+
+int32_t unixtoread(int sock,void *buff,uint32_t leng,uint32_t msecto) {
+	return streamtoread(sock,buff,leng,msecto);
+}
+
+int32_t unixtowrite(int sock,const void *buff,uint32_t leng,uint32_t msecto) {
+	return streamtowrite(sock,buff,leng,msecto);
+}
+
+int32_t unixtoforward(int srcsock,int dstsock,void *buff,uint32_t leng,uint32_t rcvd,uint32_t sent,uint32_t msecto) {
+	return streamtoforward(srcsock,dstsock,buff,leng,rcvd,sent,msecto);
+}
+
+int unixtoaccept(int lsock,uint32_t msecto) {
+	return streamtoaccept(lsock,msecto);
+}
+
+int unixaccept(int lsock) {
+	return streamaccept(lsock);
+}
+

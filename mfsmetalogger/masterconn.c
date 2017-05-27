@@ -1,24 +1,29 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <time.h>
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -31,6 +36,9 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <netinet/in.h>
+#ifdef HAVE_WRITEV
+#include <sys/uio.h>
+#endif
 
 #include "MFSCommunication.h"
 #include "datapack.h"
@@ -41,29 +49,41 @@
 #include "slogger.h"
 #include "massert.h"
 #include "sockets.h"
+#include "clocks.h"
 
-#define MaxPacketSize 1500000
+#define MaxPacketSize ANTOMA_MAXPACKETSIZE
 
-#define META_DL_BLOCK 1000000
+#define META_DL_BLOCK ((((MATOAN_MAXPACKETSIZE) - 1000) < 1000000) ? ((MATOAN_MAXPACKETSIZE) - 1000) : 1000000)
 
 // mode
-enum {FREE,CONNECTING,HEADER,DATA,KILL};
+enum {FREE,CONNECTING,DATA,KILL};
 
-typedef struct packetstruct {
-	struct packetstruct *next;
+typedef struct out_packetstruct {
+	struct out_packetstruct *next;
 	uint8_t *startptr;
 	uint32_t bytesleft;
-	uint8_t *packet;
-} packetstruct;
+	uint8_t data[1];
+} out_packetstruct;
+
+typedef struct in_packetstruct {
+	struct in_packetstruct *next;
+	uint32_t type,leng;
+	uint8_t data[1];
+} in_packetstruct;
 
 typedef struct masterconn {
-	int mode;
+	uint8_t mode;
 	int sock;
 	int32_t pdescpos;
-	uint32_t lastread,lastwrite;
-	uint8_t hdrbuff[8];
-	packetstruct inputpacket;
-	packetstruct *outputhead,**outputtail;
+	double lastread,lastwrite;
+	uint8_t input_hdr[8];
+	uint8_t *input_startptr;
+	uint32_t input_bytesleft;
+	uint8_t input_end;
+	in_packetstruct *input_packet;
+	in_packetstruct *inputhead,**inputtail;
+	out_packetstruct *outputhead,**outputtail;
+
 	uint32_t bindip;
 	uint32_t masterip;
 	uint16_t masterport;
@@ -88,8 +108,8 @@ static char *MasterHost;
 static char *MasterPort;
 static char *BindHost;
 static uint32_t Timeout;
-static void* reconnect_hook;
-static void* download_hook;
+static void *reconnect_hook;
+static void *download_hook;
 static uint64_t lastlogversion=0;
 
 static uint32_t stats_bytesout=0;
@@ -181,20 +201,18 @@ void masterconn_findlastlogversion(void) {
 }
 
 uint8_t* masterconn_createpacket(masterconn *eptr,uint32_t type,uint32_t size) {
-	packetstruct *outpacket;
+	out_packetstruct *outpacket;
 	uint8_t *ptr;
 	uint32_t psize;
 
-	outpacket=(packetstruct*)malloc(sizeof(packetstruct));
-	passert(outpacket);
 	psize = size+8;
-	outpacket->packet=malloc(psize);
-	passert(outpacket->packet);
+	outpacket=malloc(offsetof(out_packetstruct,data)+psize);
+	passert(outpacket);
 	outpacket->bytesleft = psize;
-	ptr = outpacket->packet;
+	ptr = outpacket->data;
 	put32bit(&ptr,type);
 	put32bit(&ptr,size);
-	outpacket->startptr = (uint8_t*)(outpacket->packet);
+	outpacket->startptr = outpacket->data;
 	outpacket->next = NULL;
 	*(eptr->outputtail) = outpacket;
 	eptr->outputtail = &(outpacket->next);
@@ -209,7 +227,7 @@ void masterconn_sendregister(masterconn *eptr) {
 	eptr->logfd=NULL;
 
 	if (lastlogversion>0) {
-		buff = masterconn_createpacket(eptr,MLTOMA_REGISTER,1+4+2+8);
+		buff = masterconn_createpacket(eptr,ANTOMA_REGISTER,1+4+2+8);
 		put8bit(&buff,2);
 		put16bit(&buff,VERSMAJ);
 		put8bit(&buff,VERSMID);
@@ -217,7 +235,7 @@ void masterconn_sendregister(masterconn *eptr) {
 		put16bit(&buff,Timeout);
 		put64bit(&buff,lastlogversion);
 	} else {
-		buff = masterconn_createpacket(eptr,MLTOMA_REGISTER,1+4+2);
+		buff = masterconn_createpacket(eptr,ANTOMA_REGISTER,1+4+2);
 		put8bit(&buff,1);
 		put16bit(&buff,VERSMAJ);
 		put8bit(&buff,VERSMID);
@@ -225,6 +243,7 @@ void masterconn_sendregister(masterconn *eptr) {
 		put16bit(&buff,Timeout);
 	}
 }
+
 
 void masterconn_metachanges_log(masterconn *eptr,const uint8_t *data,uint32_t length) {
 	char logname1[100],logname2[100];
@@ -247,17 +266,17 @@ void masterconn_metachanges_log(masterconn *eptr,const uint8_t *data,uint32_t le
 		return;
 	}
 	if (length<10) {
-		syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - wrong size (%"PRIu32"/9+data)",length);
+		syslog(LOG_NOTICE,"MATOAN_METACHANGES_LOG - wrong size (%"PRIu32"/9+data)",length);
 		eptr->mode = KILL;
 		return;
 	}
 	if (data[0]!=0xFF) {
-		syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - wrong packet");
+		syslog(LOG_NOTICE,"MATOAN_METACHANGES_LOG - wrong packet");
 		eptr->mode = KILL;
 		return;
 	}
 	if (data[length-1]!='\0') {
-		syslog(LOG_NOTICE,"MATOML_METACHANGES_LOG - invalid string");
+		syslog(LOG_NOTICE,"MATOAN_METACHANGES_LOG - invalid string");
 		eptr->mode = KILL;
 		return;
 	}
@@ -301,7 +320,7 @@ void masterconn_metachanges_flush(void) {
 
 int masterconn_download_end(masterconn *eptr) {
 	eptr->downloading=0;
-	masterconn_createpacket(eptr,MLTOMA_DOWNLOAD_END,0);
+	masterconn_createpacket(eptr,ANTOMA_DOWNLOAD_END,0);
 	if (eptr->metafd>=0) {
 		if (close(eptr->metafd)<0) {
 			mfs_errlog_silent(LOG_NOTICE,"error closing metafile");
@@ -316,9 +335,9 @@ int masterconn_download_end(masterconn *eptr) {
 void masterconn_download_init(masterconn *eptr,uint8_t filenum) {
 	uint8_t *ptr;
 //	syslog(LOG_NOTICE,"download_init %d",filenum);
-	if ((eptr->mode==HEADER || eptr->mode==DATA) && eptr->downloading==0) {
+	if (eptr->mode==DATA && eptr->downloading==0) {
 //		syslog(LOG_NOTICE,"sending packet");
-		ptr = masterconn_createpacket(eptr,MLTOMA_DOWNLOAD_START,1);
+		ptr = masterconn_createpacket(eptr,ANTOMA_DOWNLOAD_START,1);
 		put8bit(&ptr,filenum);
 		eptr->downloading=filenum;
 	}
@@ -328,14 +347,12 @@ void masterconn_metadownloadinit(void) {
 	masterconn_download_init(masterconnsingleton,1);
 }
 
-void masterconn_sessionsdownloadinit(void) {
-	masterconn_download_init(masterconnsingleton,2);
-}
-
 int masterconn_metadata_check(char *name) {
 	int fd;
 	char chkbuff[16];
 	char eofmark[16];
+	const uint8_t *rptr;
+	uint64_t metaversion,metaid;
 	fd = open(name,O_RDONLY);
 	if (fd<0) {
 		syslog(LOG_WARNING,"can't open downloaded metadata");
@@ -350,10 +367,24 @@ int masterconn_metadata_check(char *name) {
 		close(fd);
 		return -1;
 	}
-	if (memcmp(chkbuff,MFSSIGNATURE "M 1.5",8)==0) {
-		memset(eofmark,0,16);
-	} else if (memcmp(chkbuff,MFSSIGNATURE "M 1.7",8)==0) {
-		memcpy(eofmark,"[MFS EOF MARKER]",16);
+	if (memcmp(chkbuff,MFSSIGNATURE "M ",5)==0 && chkbuff[5]>='1' && chkbuff[5]<='9' && chkbuff[6]=='.' && chkbuff[7]>='0' && chkbuff[7]<='9') {
+		uint8_t fver = ((chkbuff[5]-'0')<<4)+(chkbuff[7]-'0');
+		if (fver<0x17) {
+			memset(eofmark,0,16);
+		} else {
+			memcpy(eofmark,"[MFS EOF MARKER]",16);
+			if (fver>=0x20) {
+				if (read(fd,chkbuff,16)!=16) {
+					syslog(LOG_WARNING,"can't read downloaded metadata");
+					close(fd);
+					return -1;
+				}
+				rptr = (uint8_t*)chkbuff;
+				metaversion = get64bit(&rptr);
+				metaid = get64bit(&rptr);
+				syslog(LOG_NOTICE,"meta data version: %"PRIu64", meta data id: 0x%016"PRIX64,metaversion,metaid);
+			}
+		}
 	} else {
 		syslog(LOG_WARNING,"bad metadata file format");
 		close(fd);
@@ -382,11 +413,11 @@ void masterconn_download_next(masterconn *eptr) {
 		if (masterconn_download_end(eptr)<0) {
 			return;
 		}
-		dltime = main_utime()-eptr->dlstartuts;
+		dltime = monotonic_useconds()-eptr->dlstartuts;
 		if (dltime<=0) {
 			dltime=1;
 		}
-		syslog(LOG_NOTICE,"%s downloaded %"PRIu64"B/%"PRIu64".%06"PRIu32"s (%.3lf MB/s)",(filenum==1)?"metadata":(filenum==2)?"sessions":(filenum==11)?"changelog_0":(filenum==12)?"changelog_1":"???",eptr->filesize,dltime/1000000,(uint32_t)(dltime%1000000),(double)(eptr->filesize)/(double)(dltime));
+		syslog(LOG_NOTICE,"%s downloaded %"PRIu64"B/%"PRIu64".%06"PRIu32"s (%.3lf MB/s)",(filenum==1)?"metadata":(filenum==11)?"changelog_0":(filenum==12)?"changelog_1":"???",eptr->filesize,dltime/1000000,(uint32_t)(dltime%1000000),(double)(eptr->filesize)/(double)(dltime));
 		if (filenum==1) {
 			if (masterconn_metadata_check("metadata_ml.tmp")==0) {
 				if (BackMetaCopies>0) {
@@ -405,8 +436,6 @@ void masterconn_download_next(masterconn *eptr) {
 			}
 			if (eptr->oldmode==0) {
 				masterconn_download_init(eptr,11);
-			} else {
-				masterconn_download_init(eptr,2);
 			}
 		} else if (filenum==11) {
 			if (rename("changelog_ml.tmp","changelog_ml_back.0.mfs")<0) {
@@ -417,14 +446,9 @@ void masterconn_download_next(masterconn *eptr) {
 			if (rename("changelog_ml.tmp","changelog_ml_back.1.mfs")<0) {
 				syslog(LOG_NOTICE,"can't rename downloaded changelog - do it manually before next download");
 			}
-			masterconn_download_init(eptr,2);
-		} else if (filenum==2) {
-			if (rename("sessions_ml.tmp","sessions_ml.mfs")<0) {
-				syslog(LOG_NOTICE,"can't rename downloaded sessions - do it manually before next download");
-			}
 		}
 	} else {	// send request for next data packet
-		ptr = masterconn_createpacket(eptr,MLTOMA_DOWNLOAD_DATA,12);
+		ptr = masterconn_createpacket(eptr,ANTOMA_DOWNLOAD_REQUEST,12);
 		put64bit(&ptr,eptr->dloffset);
 		if (eptr->filesize-eptr->dloffset>META_DL_BLOCK) {
 			put32bit(&ptr,META_DL_BLOCK);
@@ -434,30 +458,28 @@ void masterconn_download_next(masterconn *eptr) {
 	}
 }
 
-void masterconn_download_start(masterconn *eptr,const uint8_t *data,uint32_t length) {
+void masterconn_download_info(masterconn *eptr,const uint8_t *data,uint32_t length) {
 	if (length!=1 && length!=8) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_START - wrong size (%"PRIu32"/1|8)",length);
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_INFO - wrong size (%"PRIu32"/1|8)",length);
 		eptr->mode = KILL;
 		return;
 	}
 	passert(data);
 	if (length==1) {
-		eptr->downloading=0;
+		eptr->downloading = 0;
 		syslog(LOG_NOTICE,"download start error");
 		return;
 	}
 	eptr->filesize = get64bit(&data);
 	eptr->dloffset = 0;
 	eptr->downloadretrycnt = 0;
-	eptr->dlstartuts = main_utime();
+	eptr->dlstartuts = monotonic_useconds();
 	if (eptr->downloading==1) {
 		eptr->metafd = open("metadata_ml.tmp",O_WRONLY | O_TRUNC | O_CREAT,0666);
-	} else if (eptr->downloading==2) {
-		eptr->metafd = open("sessions_ml.tmp",O_WRONLY | O_TRUNC | O_CREAT,0666);
 	} else if (eptr->downloading==11 || eptr->downloading==12) {
 		eptr->metafd = open("changelog_ml.tmp",O_WRONLY | O_TRUNC | O_CREAT,0666);
 	} else {
-		syslog(LOG_NOTICE,"unexpected MATOML_DOWNLOAD_START packet");
+		syslog(LOG_NOTICE,"unexpected MATOAN_DOWNLOAD_INFO packet");
 		eptr->mode = KILL;
 		return;
 	}
@@ -475,12 +497,12 @@ void masterconn_download_data(masterconn *eptr,const uint8_t *data,uint32_t leng
 	uint32_t crc;
 	ssize_t ret;
 	if (eptr->metafd<0) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - file not opened");
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_DATA - file not opened");
 		eptr->mode = KILL;
 		return;
 	}
 	if (length<16) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - wrong size (%"PRIu32"/16+data)",length);
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_DATA - wrong size (%"PRIu32"/16+data)",length);
 		eptr->mode = KILL;
 		return;
 	}
@@ -489,17 +511,17 @@ void masterconn_download_data(masterconn *eptr,const uint8_t *data,uint32_t leng
 	leng = get32bit(&data);
 	crc = get32bit(&data);
 	if (leng+16!=length) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - wrong size (%"PRIu32"/16+%"PRIu32")",length,leng);
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_DATA - wrong size (%"PRIu32"/16+%"PRIu32")",length,leng);
 		eptr->mode = KILL;
 		return;
 	}
 	if (offset!=eptr->dloffset) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - unexpected file offset (%"PRIu64"/%"PRIu64")",offset,eptr->dloffset);
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_DATA - unexpected file offset (%"PRIu64"/%"PRIu64")",offset,eptr->dloffset);
 		eptr->mode = KILL;
 		return;
 	}
 	if (offset+leng>eptr->filesize) {
-		syslog(LOG_NOTICE,"MATOML_DOWNLOAD_DATA - unexpected file size (%"PRIu64"/%"PRIu64")",offset+leng,eptr->filesize);
+		syslog(LOG_NOTICE,"MATOAN_DOWNLOAD_DATA - unexpected file size (%"PRIu64"/%"PRIu64")",offset+leng,eptr->filesize);
 		eptr->mode = KILL;
 		return;
 	}
@@ -553,7 +575,6 @@ void masterconn_beforeclose(masterconn *eptr) {
 		close(eptr->metafd);
 		eptr->metafd=-1;
 		unlink("metadata_ml.tmp");
-		unlink("sessions_ml.tmp");
 		unlink("changelog_ml.tmp");
 	}
 	if (eptr->logfd) {
@@ -570,13 +591,13 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 			break;
 		case ANTOAN_BAD_COMMAND_SIZE: // for future use
 			break;
-		case MATOML_METACHANGES_LOG:
+		case MATOAN_METACHANGES_LOG:
 			masterconn_metachanges_log(eptr,data,length);
 			break;
-		case MATOML_DOWNLOAD_START:
-			masterconn_download_start(eptr,data,length);
+		case MATOAN_DOWNLOAD_INFO:
+			masterconn_download_info(eptr,data,length);
 			break;
-		case MATOML_DOWNLOAD_DATA:
+		case MATOAN_DOWNLOAD_DATA:
 			masterconn_download_data(eptr,data,length);
 			break;
 		default:
@@ -585,42 +606,20 @@ void masterconn_gotpacket(masterconn *eptr,uint32_t type,const uint8_t *data,uin
 	}
 }
 
-void masterconn_term(void) {
-	packetstruct *pptr,*paptr;
-	masterconn *eptr = masterconnsingleton;
-
-	if (eptr->mode!=FREE) {
-		tcpclose(eptr->sock);
-		if (eptr->mode!=CONNECTING) {
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
-			}
-			pptr = eptr->outputhead;
-			while (pptr) {
-				if (pptr->packet) {
-					free(pptr->packet);
-				}
-				paptr = pptr;
-				pptr = pptr->next;
-				free(paptr);
-			}
-		}
-	}
-
-	free(eptr);
-	free(MasterHost);
-	free(MasterPort);
-	free(BindHost);
-	masterconnsingleton = NULL;
-}
-
 void masterconn_connected(masterconn *eptr) {
+	double now;
+
+	now = monotonic_seconds();
 	tcpnodelay(eptr->sock);
-	eptr->mode=HEADER;
-	eptr->inputpacket.next = NULL;
-	eptr->inputpacket.bytesleft = 8;
-	eptr->inputpacket.startptr = eptr->hdrbuff;
-	eptr->inputpacket.packet = NULL;
+	eptr->mode = DATA;
+	eptr->lastread = now;
+	eptr->lastwrite = now;
+	eptr->input_bytesleft = 8;
+	eptr->input_startptr = eptr->input_hdr;
+	eptr->input_end = 0;
+	eptr->input_packet = NULL;
+	eptr->inputhead = NULL;
+	eptr->inputtail = &(eptr->inputhead);
 	eptr->outputhead = NULL;
 	eptr->outputtail = &(eptr->outputhead);
 
@@ -628,7 +627,6 @@ void masterconn_connected(masterconn *eptr) {
 	if (lastlogversion==0) {
 		masterconn_metadownloadinit();
 	}
-	eptr->lastread = eptr->lastwrite = main_time();
 }
 
 int masterconn_initconnect(masterconn *eptr) {
@@ -636,11 +634,10 @@ int masterconn_initconnect(masterconn *eptr) {
 	if (eptr->masteraddrvalid==0) {
 		uint32_t mip,bip;
 		uint16_t mport;
-		if (tcpresolve(BindHost,NULL,&bip,NULL,1)>=0) {
-			eptr->bindip = bip;
-		} else {
-			eptr->bindip = 0;
+		if (tcpresolve(BindHost,NULL,&bip,NULL,1)<0) {
+			bip = 0;
 		}
+		eptr->bindip = bip;
 		if (tcpresolve(MasterHost,MasterPort,&mip,&mport,0)>=0) {
 			eptr->masterip = mip;
 			eptr->masterport = mport;
@@ -703,100 +700,223 @@ void masterconn_connecttest(masterconn *eptr) {
 	}
 }
 
-void masterconn_read(masterconn *eptr) {
+void masterconn_read(masterconn *eptr,double now) {
 	int32_t i;
-	uint32_t type,size;
+	uint32_t type,leng;
 	const uint8_t *ptr;
+	uint32_t rbleng,rbpos;
+	uint8_t err,hup;
+	static uint8_t *readbuff = NULL;
+	static uint32_t readbuffsize = 0;
+
+	if (eptr == NULL) {
+		if (readbuff != NULL) {
+			free(readbuff);
+		}
+		readbuff = NULL;
+		readbuffsize = 0;
+		return;
+	}
+
+	if (readbuffsize==0) {
+		readbuffsize = 65536;
+		readbuff = malloc(readbuffsize);
+		passert(readbuff);
+	}
+
+	rbleng = 0;
+	err = 0;
+	hup = 0;
 	for (;;) {
-		i=read(eptr->sock,eptr->inputpacket.startptr,eptr->inputpacket.bytesleft);
+		i = read(eptr->sock,readbuff+rbleng,readbuffsize-rbleng);
 		if (i==0) {
-			syslog(LOG_NOTICE,"connection was reset by Master");
-			eptr->mode = KILL;
-			return;
-		}
-		if (i<0) {
-			if (errno!=EAGAIN) {
-				mfs_errlog_silent(LOG_NOTICE,"read from Master error");
-				eptr->mode = KILL;
+			hup = 1;
+			break;
+		} else if (i<0) {
+			if (ERRNO_ERROR) {
+				err = 1;
 			}
-			return;
-		}
-		stats_bytesin+=i;
-		eptr->inputpacket.startptr+=i;
-		eptr->inputpacket.bytesleft-=i;
-
-		if (eptr->inputpacket.bytesleft>0) {
-			return;
-		}
-
-		if (eptr->mode==HEADER) {
-			ptr = eptr->hdrbuff+4;
-			size = get32bit(&ptr);
-
-			if (size>0) {
-				if (size>MaxPacketSize) {
-					syslog(LOG_WARNING,"Master packet too long (%"PRIu32"/%u)",size,MaxPacketSize);
-					eptr->mode = KILL;
-					return;
-				}
-				eptr->inputpacket.packet = malloc(size);
-				passert(eptr->inputpacket.packet);
-				eptr->inputpacket.bytesleft = size;
-				eptr->inputpacket.startptr = eptr->inputpacket.packet;
-				eptr->mode = DATA;
-				continue;
+			break;
+		} else {
+			stats_bytesin+=i;
+			rbleng += i;
+			if (rbleng==readbuffsize) {
+				readbuffsize*=2;
+				readbuff = realloc(readbuff,readbuffsize);
+				passert(readbuff);
+			} else {
+				break;
 			}
-			eptr->mode = DATA;
+		}
+	}
+
+	if (rbleng>0) {
+		eptr->lastread = now;
+	}
+
+	rbpos = 0;
+	while (rbpos<rbleng) {
+		if ((rbleng-rbpos)>=eptr->input_bytesleft) {
+			memcpy(eptr->input_startptr,readbuff+rbpos,eptr->input_bytesleft);
+			i = eptr->input_bytesleft;
+		} else {
+			memcpy(eptr->input_startptr,readbuff+rbpos,rbleng-rbpos);
+			i = rbleng-rbpos;
+		}
+		rbpos += i;
+		eptr->input_startptr+=i;
+		eptr->input_bytesleft-=i;
+
+		if (eptr->input_bytesleft>0) {
+			break;
 		}
 
-		if (eptr->mode==DATA) {
-			ptr = eptr->hdrbuff;
+		if (eptr->input_packet == NULL) {
+			ptr = eptr->input_hdr;
 			type = get32bit(&ptr);
-			size = get32bit(&ptr);
+			leng = get32bit(&ptr);
 
-			eptr->mode=HEADER;
-			eptr->inputpacket.bytesleft = 8;
-			eptr->inputpacket.startptr = eptr->hdrbuff;
-
-			masterconn_gotpacket(eptr,type,eptr->inputpacket.packet,size);
-
-			if (eptr->inputpacket.packet) {
-				free(eptr->inputpacket.packet);
+			if (leng>MaxPacketSize) {
+				syslog(LOG_WARNING,"Master packet too long (%"PRIu32"/%u)",leng,MaxPacketSize);
+				eptr->input_end = 1;
+				return;
 			}
-			eptr->inputpacket.packet=NULL;
+
+			eptr->input_packet = malloc(offsetof(in_packetstruct,data)+leng);
+			passert(eptr->input_packet);
+			eptr->input_packet->next = NULL;
+			eptr->input_packet->type = type;
+			eptr->input_packet->leng = leng;
+
+			eptr->input_startptr = eptr->input_packet->data;
+			eptr->input_bytesleft = leng;
 		}
+
+		if (eptr->input_bytesleft>0) {
+			continue;
+		}
+
+		if (eptr->input_packet != NULL) {
+			*(eptr->inputtail) = eptr->input_packet;
+			eptr->inputtail = &(eptr->input_packet->next);
+			eptr->input_packet = NULL;
+			eptr->input_bytesleft = 8;
+			eptr->input_startptr = eptr->input_hdr;
+		}
+	}
+
+	if (hup) {
+		syslog(LOG_NOTICE,"connection was reset by Master");
+		eptr->input_end = 1;
+	} else if (err) {
+		mfs_errlog_silent(LOG_NOTICE,"read from Master error");
+		eptr->input_end = 1;
 	}
 }
 
-void masterconn_write(masterconn *eptr) {
-	packetstruct *pack;
+void masterconn_parse(masterconn *eptr) {
+	in_packetstruct *ipack;
+	uint64_t starttime;
+	uint64_t currtime;
+
+	starttime = monotonic_useconds();
+	currtime = starttime;
+	while (eptr->mode==DATA && (ipack = eptr->inputhead)!=NULL && starttime+10000>currtime) {
+		masterconn_gotpacket(eptr,ipack->type,ipack->data,ipack->leng);
+		eptr->inputhead = ipack->next;
+		free(ipack);
+		if (eptr->inputhead==NULL) {
+			eptr->inputtail = &(eptr->inputhead);
+		} else {
+			currtime = monotonic_useconds();
+		}
+	}
+	if (eptr->mode==DATA && eptr->inputhead==NULL && eptr->input_end) {
+		eptr->mode = KILL;
+	}
+}
+
+void masterconn_write(masterconn *eptr,double now) {
+	out_packetstruct *opack;
 	int32_t i;
+#ifdef HAVE_WRITEV
+	struct iovec iovtab[100];
+	uint32_t iovdata;
+	uint32_t leng;
+	uint32_t left;
+
 	for (;;) {
-		pack = eptr->outputhead;
-		if (pack==NULL) {
+		leng = 0;
+		for (iovdata=0,opack=eptr->outputhead ; iovdata<100 && opack!=NULL ; iovdata++,opack=opack->next) {
+			iovtab[iovdata].iov_base = opack->startptr;
+			iovtab[iovdata].iov_len = opack->bytesleft;
+			leng += opack->bytesleft;
+		}
+		if (iovdata==0) {
 			return;
 		}
-		i=write(eptr->sock,pack->startptr,pack->bytesleft);
+		i = writev(eptr->sock,iovtab,iovdata);
 		if (i<0) {
-			if (errno!=EAGAIN) {
+			if (ERRNO_ERROR) {
 				mfs_errlog_silent(LOG_NOTICE,"write to Master error");
 				eptr->mode = KILL;
 			}
 			return;
 		}
+		if (i>0) {
+			eptr->lastwrite = now;
+		}
 		stats_bytesout+=i;
-		pack->startptr+=i;
-		pack->bytesleft-=i;
-		if (pack->bytesleft>0) {
+		left = i;
+		while (left>0 && eptr->outputhead!=NULL) {
+			opack = eptr->outputhead;
+			if (opack->bytesleft>left) {
+				opack->startptr+=left;
+				opack->bytesleft-=left;
+				left = 0;
+			} else {
+				left -= opack->bytesleft;
+				eptr->outputhead = opack->next;
+				if (eptr->outputhead==NULL) {
+					eptr->outputtail = &(eptr->outputhead);
+				}
+				free(opack);
+			}
+		}
+		if ((uint32_t)i < leng) {
 			return;
 		}
-		free(pack->packet);
-		eptr->outputhead = pack->next;
+	}
+#else
+	for (;;) {
+		opack = eptr->outputhead;
+		if (opack==NULL) {
+			return;
+		}
+		i=write(eptr->sock,opack->startptr,opack->bytesleft);
+		if (i<0) {
+			if (ERRNO_ERROR) {
+				mfs_errlog_silent(LOG_NOTICE,"write to Master error");
+				eptr->mode = KILL;
+			}
+			return;
+		}
+		if (i>0) {
+			eptr->lastwrite = now;
+		}
+		stats_bytesout+=i;
+		opack->startptr+=i;
+		opack->bytesleft-=i;
+		if (opack->bytesleft>0) {
+			return;
+		}
+		eptr->outputhead = opack->next;
 		if (eptr->outputhead==NULL) {
 			eptr->outputtail = &(eptr->outputhead);
 		}
-		free(pack);
+		free(opack);
 	}
+#endif
 }
 
 
@@ -808,76 +928,81 @@ void masterconn_desc(struct pollfd *pdesc,uint32_t *ndesc) {
 	if (eptr->mode==FREE || eptr->sock<0) {
 		return;
 	}
-	if (eptr->mode==HEADER || eptr->mode==DATA) {
+	pdesc[pos].events = 0;
+	if (eptr->mode==DATA && eptr->input_end==0) {
+		pdesc[pos].events |= POLLIN;
+	}
+	if ((eptr->mode==DATA && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
+		pdesc[pos].events |= POLLOUT;
+	}
+	if (pdesc[pos].events!=0) {
 		pdesc[pos].fd = eptr->sock;
-		pdesc[pos].events = POLLIN;
 		eptr->pdescpos = pos;
 		pos++;
-	}
-	if (((eptr->mode==HEADER || eptr->mode==DATA) && eptr->outputhead!=NULL) || eptr->mode==CONNECTING) {
-		if (eptr->pdescpos>=0) {
-			pdesc[eptr->pdescpos].events |= POLLOUT;
-		} else {
-			pdesc[pos].fd = eptr->sock;
-			pdesc[pos].events = POLLOUT;
-			eptr->pdescpos = pos;
-			pos++;
-		}
 	}
 	*ndesc = pos;
 }
 
+void masterconn_disconnection_check(void) {
+	masterconn *eptr = masterconnsingleton;
+	in_packetstruct *ipptr,*ipaptr;
+	out_packetstruct *opptr,*opaptr;
+
+	if (eptr->mode == KILL) {
+		masterconn_beforeclose(eptr);
+		tcpclose(eptr->sock);
+		if (eptr->input_packet) {
+			free(eptr->input_packet);
+		}
+		ipptr = eptr->inputhead;
+		while (ipptr) {
+			ipaptr = ipptr;
+			ipptr = ipptr->next;
+			free(ipaptr);
+		}
+		opptr = eptr->outputhead;
+		while (opptr) {
+			opaptr = opptr;
+			opptr = opptr->next;
+			free(opaptr);
+		}
+		eptr->mode = FREE;
+	}
+}
+
 void masterconn_serve(struct pollfd *pdesc) {
-	uint32_t now=main_time();
-	packetstruct *pptr,*paptr;
+	double now;
 	masterconn *eptr = masterconnsingleton;
 
-	if (eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLHUP | POLLERR))) {
-		if (eptr->mode==CONNECTING) {
-			masterconn_connecttest(eptr);
-		} else {
-			eptr->mode = KILL;
-		}
-	}
+	now = monotonic_seconds();
+
 	if (eptr->mode==CONNECTING) {
-		if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & POLLOUT)) { // FD_ISSET(eptr->sock,wset)) {
+		if (eptr->sock>=0 && eptr->pdescpos>=0 && (pdesc[eptr->pdescpos].revents & (POLLOUT | POLLHUP | POLLERR))) { // FD_ISSET(eptr->sock,wset)) {
 			masterconn_connecttest(eptr);
 		}
 	} else {
 		if (eptr->pdescpos>=0) {
-			if ((eptr->mode==HEADER || eptr->mode==DATA) && (pdesc[eptr->pdescpos].revents & POLLIN)) { // FD_ISSET(eptr->sock,rset)) {
-				eptr->lastread = now;
-				masterconn_read(eptr);
+			if ((pdesc[eptr->pdescpos].revents & (POLLERR|POLLIN))==POLLIN && eptr->mode==DATA) {
+				masterconn_read(eptr,now);
 			}
-			if ((eptr->mode==HEADER || eptr->mode==DATA) && (pdesc[eptr->pdescpos].revents & POLLOUT)) { // FD_ISSET(eptr->sock,wset)) {
-				eptr->lastwrite = now;
-				masterconn_write(eptr);
+			if (pdesc[eptr->pdescpos].revents & (POLLERR|POLLHUP)) {
+				eptr->input_end = 1;
 			}
-			if ((eptr->mode==HEADER || eptr->mode==DATA) && eptr->lastread+Timeout<now) {
-				eptr->mode = KILL;
+			masterconn_parse(eptr);
+		}
+		if (eptr->mode==DATA && eptr->lastwrite+(Timeout/3.0)<now && eptr->outputhead==NULL) {
+			masterconn_createpacket(eptr,ANTOAN_NOP,0);
+		}
+		if (eptr->pdescpos>=0) {
+			if ((((pdesc[eptr->pdescpos].events & POLLOUT)==0 && (eptr->outputhead)) || (pdesc[eptr->pdescpos].revents & POLLOUT)) && eptr->mode==DATA) {
+				masterconn_write(eptr,now);
 			}
-			if ((eptr->mode==HEADER || eptr->mode==DATA) && eptr->lastwrite+(Timeout/3)<now && eptr->outputhead==NULL) {
-				masterconn_createpacket(eptr,ANTOAN_NOP,0);
-			}
+		}
+		if (eptr->mode==DATA && eptr->lastread+Timeout<now) {
+			eptr->mode = KILL;
 		}
 	}
-	if (eptr->mode == KILL) {
-		masterconn_beforeclose(eptr);
-		tcpclose(eptr->sock);
-		if (eptr->inputpacket.packet) {
-			free(eptr->inputpacket.packet);
-		}
-		pptr = eptr->outputhead;
-		while (pptr) {
-			if (pptr->packet) {
-				free(pptr->packet);
-			}
-			paptr = pptr;
-			pptr = pptr->next;
-			free(paptr);
-		}
-		eptr->mode = FREE;
-	}
+	masterconn_disconnection_check();
 }
 
 void masterconn_reconnect(void) {
@@ -885,6 +1010,42 @@ void masterconn_reconnect(void) {
 	if (eptr->mode==FREE) {
 		masterconn_initconnect(eptr);
 	}
+}
+
+void masterconn_term(void) {
+	masterconn *eptr = masterconnsingleton;
+	in_packetstruct *ipptr,*ipaptr;
+	out_packetstruct *opptr,*opaptr;
+
+	if (eptr->mode!=FREE) {
+		tcpclose(eptr->sock);
+		if (eptr->mode!=CONNECTING) {
+			if (eptr->input_packet) {
+				free(eptr->input_packet);
+			}
+			ipptr = eptr->inputhead;
+			while (ipptr) {
+				ipaptr = ipptr;
+				ipptr = ipptr->next;
+				free(ipaptr);
+			}
+			opptr = eptr->outputhead;
+			while (opptr) {
+				opaptr = opptr;
+				opptr = opptr->next;
+				free(opaptr);
+			}
+		}
+	}
+
+	masterconn_read(NULL,0.0); // free internal read buffer
+
+	free(eptr);
+
+	free(MasterHost);
+	free(MasterPort);
+	free(BindHost);
+	masterconnsingleton = NULL;
 }
 
 void masterconn_reload(void) {
@@ -896,8 +1057,8 @@ void masterconn_reload(void) {
 	free(MasterPort);
 	free(BindHost);
 
-	MasterHost = cfg_getstr("MASTER_HOST","mfsmaster");
-	MasterPort = cfg_getstr("MASTER_PORT","9419");
+	MasterHost = cfg_getstr("MASTER_HOST",DEFAULT_MASTERNAME);
+	MasterPort = cfg_getstr("MASTER_PORT",DEFAULT_MASTER_CONTROL_PORT);
 	BindHost = cfg_getstr("BIND_HOST","*");
 
 	eptr->masteraddrvalid = 0;
@@ -905,14 +1066,14 @@ void masterconn_reload(void) {
 		eptr->mode = KILL;
 	}
 
-	Timeout = cfg_getuint32("MASTER_TIMEOUT",60);
+	Timeout = cfg_getuint32("MASTER_TIMEOUT",10);
 	BackLogsNumber = cfg_getuint32("BACK_LOGS",50);
 	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",3);
 
 	ReconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY",5);
 	MetaDLFreq = cfg_getuint32("META_DOWNLOAD_FREQ",24);
 
-	if (Timeout>65536) {
+	if (Timeout>65535) {
 		Timeout=65535;
 	}
 	if (Timeout<10) {
@@ -931,8 +1092,8 @@ void masterconn_reload(void) {
 		BackMetaCopies=99;
 	}
 
-	main_timechange(reconnect_hook,TIMEMODE_RUN_LATE,ReconnectionDelay,0);
-	main_timechange(download_hook,TIMEMODE_RUN_LATE,MetaDLFreq*3600,630);
+	main_time_change(reconnect_hook,ReconnectionDelay,0);
+	main_time_change(download_hook,MetaDLFreq*3600,630);
 }
 
 int masterconn_init(void) {
@@ -940,16 +1101,17 @@ int masterconn_init(void) {
 	uint32_t MetaDLFreq;
 	masterconn *eptr;
 
+
 	ReconnectionDelay = cfg_getuint32("MASTER_RECONNECTION_DELAY",5);
-	MasterHost = cfg_getstr("MASTER_HOST","mfsmaster");
-	MasterPort = cfg_getstr("MASTER_PORT","9419");
+	MasterHost = cfg_getstr("MASTER_HOST",DEFAULT_MASTERNAME);
+	MasterPort = cfg_getstr("MASTER_PORT",DEFAULT_MASTER_CONTROL_PORT);
 	BindHost = cfg_getstr("BIND_HOST","*");
-	Timeout = cfg_getuint32("MASTER_TIMEOUT",60);
+	Timeout = cfg_getuint32("MASTER_TIMEOUT",10);
 	BackLogsNumber = cfg_getuint32("BACK_LOGS",50);
 	BackMetaCopies = cfg_getuint32("BACK_META_KEEP_PREVIOUS",3);
 	MetaDLFreq = cfg_getuint32("META_DOWNLOAD_FREQ",24);
 
-	if (Timeout>65536) {
+	if (Timeout>65535) {
 		Timeout=65535;
 	}
 	if (Timeout<10) {
@@ -978,12 +1140,11 @@ int masterconn_init(void) {
 	if (masterconn_initconnect(eptr)<0) {
 		return -1;
 	}
-	reconnect_hook = main_timeregister(TIMEMODE_RUN_LATE,ReconnectionDelay,0,masterconn_reconnect);
-	download_hook = main_timeregister(TIMEMODE_RUN_LATE,MetaDLFreq*3600,630,masterconn_metadownloadinit);
-	main_destructregister(masterconn_term);
-	main_pollregister(masterconn_desc,masterconn_serve);
-	main_reloadregister(masterconn_reload);
-	main_timeregister(TIMEMODE_RUN_LATE,60,0,masterconn_sessionsdownloadinit);
-	main_timeregister(TIMEMODE_RUN_LATE,1,0,masterconn_metachanges_flush);
+	reconnect_hook = main_time_register(ReconnectionDelay,0,masterconn_reconnect);
+	download_hook = main_time_register(MetaDLFreq*3600,630,masterconn_metadownloadinit);
+	main_destruct_register(masterconn_term);
+	main_poll_register(masterconn_desc,masterconn_serve);
+	main_reload_register(masterconn_reload);
+	main_time_register(1,0,masterconn_metachanges_flush);
 	return 0;
 }

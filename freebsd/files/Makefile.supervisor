@@ -1,0 +1,14 @@
+# Created by: Jakub Kruszona-Zawadzki <acid@moosefs.com> ; Based on port created by: Chifeng Qu <chifeng@gmail.com>
+# $FreeBSD$
+
+PKGNAMESUFFIX=	-supervisor
+
+COMMENT=	Masters supervising utility
+
+LICENSE=	GPLv2
+
+MFS_COMPONENT=	supervisor
+
+MASTERDIR=	${.CURDIR}/../moosefs-master
+
+.include "${MASTERDIR}/Makefile"

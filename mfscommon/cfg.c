@@ -1,22 +1,26 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -49,6 +53,13 @@ int cfg_reload (void) {
 		mfs_arg_syslog(LOG_ERR,"cannot load config file: %s",cfgfname);
 		return 0;
 	}
+	while (paramhead!=NULL) {
+		tmp = paramhead;
+		paramhead = tmp->next;
+		free(tmp->name);
+		free(tmp->value);
+		free(tmp);
+	}
 	while (fgets(linebuff,999,fd)!=NULL) {
 		linebuff[999]=0;
 		if (linebuff[0]=='#') {
@@ -57,7 +68,7 @@ int cfg_reload (void) {
 		i = 0;
 		while (linebuff[i]==' ' || linebuff[i]=='\t') i++;
 		nps = i;
-		while (linebuff[i]>32 && linebuff[i]<127) {
+		while (linebuff[i]>32 && linebuff[i]<127 && linebuff[i]!='=')  {
 			i++;
 		}
 		npe = i;

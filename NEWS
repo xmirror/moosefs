@@ -1,8 +1,761 @@
 This file lists noteworthy changes in MooseFS.
 
+* MooseFS 3.0.39-1 (2015-07-23)
+
+  - (master) fixed truncate bug (wrong behaviour when chunk was locked - not dangerous)
+  - (cgi+cli) fixed python3 incompatibilities
+
+* MooseFS 3.0.38-1 (2015-07-13)
+
+  - (master+cgi+cli) added check for servers with disks marked for removal (if disks can be safely removed)
+
+* MooseFS 3.0.37-1 (2015-07-08)
+
+  - (mount) performance fixes in read module
+
+* MooseFS 3.0.36-1 (2015-07-07)
+
+  - (mount) fixed bug in read module (intr. in 3.0.35)
+
+* MooseFS 3.0.35-1 (2015-07-06)
+
+  - (mount) fixed state automaton in read module (in very rare cases zeros might be read instead of data - intr. in 3.0.23)
+
+* MooseFS 3.0.34-1 (2015-06-26)
+
+  - (master) fixed small follower-desync issue (pro version only - intr. in 3.0.33)
+  - (master) fixed session restore/synchronization issue (bad info length after metadata restore)
+  - (mount) fixed setting maxfleng on truncate
+
+* MooseFS 3.0.33-1 (2015-06-25)
+
+  - (master) added metaid synchronization between masters (pro version only)
+  - (cgi+cli) fixed "Metadata Info" table (intr. in 3.0.32).
+
+* MooseFS 3.0.32-1 (2015-06-23)
+
+  - (master) added exports checksum
+  - (master) changed sessions parameters refresh policy (refresh all parameters after 'exports' reload)
+  - (master) fixed truncate bug (close file without writing data may cause file truncate - dangerous !!!, introduced in 3.0.25)
+
+* MooseFS 3.0.31-1 (2015-06-22)
+
+  - (master) changed metadata storing policy - when there are no followers, then store metadata every hour (pro version only)
+
+* MooseFS 3.0.30-1 (2015-06-19)
+
+  - (master) added 'empty' chunk count to mfscheckfile (fixed mfsfileinfo on sparse files)
+  - (master) added 'mfsrmsnapshot' (remove whole directory created as a result of mfsmakesnapshot)
+  - (tools) fixed memory overrun error during mfssetgoal
+
+* MooseFS 3.0.29-1 (2015-06-18)
+
+  - (master) fixed truncate bug (freezing mount during truncate in some rare scenarios)
+
+* MooseFS 3.0.28-1 (2015-06-17)
+
+  - (master) fixed lock issue on empty (chunkid==0) chunk
+
+* MooseFS 3.0.27-1 (2015-06-16)
+
+  - (master) fixed memory allocation size bug in chunk's "ftab"
+
+* MooseFS 3.0.26-1 (2015-06-15)
+
+  - (master+tools) added reportig invalid chunks to mfsfileinfo
+  - (cs) added protection against using '.chunkdb' when folders were changed by user
+  - (master) fixed free inodes list issue (can happen only during first 60 seconds after starting master with new metadata)
+
+* MooseFS 3.0.25-1 (2015-06-11)
+
+  - (cs) fixed sending disk sizes after chunk deletions
+  - (tools) added displaying chunk information in "mfsfileinfo" for chunks exceeding file size
+  - (cli+cgi) added "missing chunk type" column in "missing files" table
+  - (master) added automatic fixing missing chunks exceeding file size
+  - (cs) fixed "got unknown message (type:212)" issue
+  - (cs) added ip and port to connection error message
+  - (master+mount) added length and write/read synchronization between nodes
+  - (mount) removed waiting for data sync on mfs_release
+  - (master+mount) added not cacheable ENOENT status
+
+* MooseFS 3.0.24-1 (2015-06-01)
+
+  - (master) changed two highest replication priorities (fixes problem with slow replication from "marked for removal" disks)
+  - (cs) added option '!' to paths in mfshdd.cfg - ignore 'metaid'
+
+* MooseFS 3.0.23-1 (2015-05-19)
+
+  - (configure) added python as dependency for mfscgiserv
+  - (mount) readdata module improvements (masterdata cache)
+
+* MooseFS 3.0.22-1 (2015-05-15)
+
+  - (mount) fixed dircache invalidation
+
+* MooseFS 3.0.21-1 (2015-05-14)
+
+  - (master) fixed bug in flock (bsd) locks
+
+* MooseFS 3.0.20-1 (2015-05-12)
+
+  - (cli) fixed "last save time" in master general info (-SIG)
+  - (master) added "last seen paths" to TRASH and SUSTAINED files in inode to path resolver
+  - (mount) fixed "race conditions" in new reading module (intr. in 3.0.19)
+  - (mount) added "mfsnoxattrs","mfsnoposixlocks" and "mfsnobsdlocks" options
+  - (master) added support for "DEFAULT" options in mfsexports.cfg
+
+* MooseFS 3.0.19-1 (2015-05-08)
+
+  - (master) removed missing chunks/files from messages
+  - (cli+cgi) added presenting missing chunks/files in separate table
+  - (mount) improved reading performance
+  - (master) added missing chunks/files log
+  - (master) added fast delete during rebalance
+
+* MooseFS 3.0.18-1 (2015-04-29)
+
+  - (master) fixed bug in chunk unlocking mechanism (few writes to the same chunk may cause master freezing)
+
+* MooseFS 3.0.17-1 (2015-04-20)
+
+  - (master) fixed 'df' for subnodes with quota set on ancestor nodes
+
+* MooseFS 3.0.16-1 (2015-04-15)
+
+  - (all) changed freebsd ports
+  - (cgiserv) fixed POST handling
+  - (mount) fixed handling read-ahead upper limit
+
+* MooseFS 3.0.15-1 (2015-04-10)
+
+  - (master) added 'admin' flag to default mfsexport.cfg
+  - (master) fixed setgoal bug (user couldn't change goal without admin privilege)
+
+* MooseFS 3.0.14-1 (2015-04-09)
+
+  - (mount) fixed rare getgroup race condition
+
+* MooseFS 3.0.13-1 (2015-04-03)
+
+  - (tools,mount) fixed man pages
+
+* MooseFS 3.0.12-1 (2015-03-31)
+
+  - (netdump) fixed man page
+
+* MooseFS 3.0.11-1 (2015-03-18)
+
+  - (all) changed license of standard version to GPLv2
+  - (all) changed name moosefs-ce to just moosefs
+
+* MooseFS 3.0.10-1 (2015-03-10)
+
+  - (master) fixed possible reference to freed memory during metadata recovery
+  - (master) added minimal priority queue length
+  - (cs) fixed removing damaged disks (lock file issue)
+  - (master) treat servers in maintenance mode as overloaded (no chunk creations, replications etc.)
+  - (master+tools) added tools for manipulating archive flag
+  - (master+mount) added prefered labels for I/O
+  - (master) added option for setting length of chunks priority queues
+
+* MooseFS 3.0.9-1 (2015-02-19)
+
+  - (all) added separated goal for "create", "keep" and "archive"
+  - (all) added "create mode" (loose/standard/strict)
+  - (master) fixed check for ENOSPC condition
+  - (mount) added "chunkready" condition before close (alternative to full fsync)
+
+* MooseFS 3.0.8-1 (2015-02-11)
+
+  - (master) fixed descriptor leak
+  - (mount) new delayed ops scheduler
+
+* MooseFS 3.0.7-1 (2015-02-06)
+
+  - (cs+master) added heavy-loaded status
+
+* MooseFS 3.0.6-1 (2015-02-05)
+
+  - (master) removed chunk preallocation
+  - (master) added write-in-progress counters
+  - (master) added experimental "new chunk" algorithm
+
+* MooseFS 3.0.5-1 (2015-02-03)
+
+  - (master) changed preallocation algorithm
+  - (all) changed assert macros (added source file and line number to syslog msg)
+  - (mount) made fsync before close optional (added option mfsfsyncbeforeclose)
+
+* MooseFS 3.0.4-1 (2015-02-02)
+
+  - (cs) made fsync before close optional
+  - (all) added missing options to manpages
+  - (mount+master) changed atime/mtime setattr handling (avoid fsync on mtime change)
+
+* MooseFS 3.0.3-1 (2015-01-30)
+
+  - (cs) disabled Nagle's algorithm in mainserv and replicator
+
+* MooseFS 3.0.2-1 (2015-01-29)
+
+  - (master) added experimental functions in preallocation
+
+* MooseFS 3.0.1-1 (2015-01-28)
+
+  - (master) changed preallocation formula
+  - (master) changed choosing privlileged servers for rebalance replication
+  - (cs) added new xor-replication
+
+* MooseFS 3.0.0-1 (2015-01-22)
+
+  - (master+mount) fixed small posix incompatibility (utime with NULL arg)
+  - (all) change version to 3.0
+
+* MooseFS 2.1.12-1 (2015-01-13)
+
+  - (master+cs) monotonic chart counters
+  - (cs) fixed error handling in writing data (mainserv)
+
+* MooseFS 2.1.11-1 (2015-01-12)
+
+  - (master) better state switching (pro version only)
+
+* MooseFS 2.1.10-1 (2015-01-09)
+
+  - (cs) fixed handling .metaid file
+  - (cs) fixed showing incorrect I/O error messages
+  - (cs) fixed drive removals
+
+* MooseFS 2.1.9-1 (2015-01-08)
+
+  - (master) force rebalancing when some servers are almost full (regardless of undergoal priority queues)
+  - (master) fixed adding chunks to priority queues (when replication limits are not reached then undergoal chunks shouldn't be added to queues)
+  - (master) fixed potential double decreasing number of sockets in session data
+
+* MooseFS 2.1.8-1 (2015-01-07)
+
+  - (master) fixed leader-follower synchronization issue (preallocated chunk deletion - pro version only)
+  - (master) fixed setting goal to 9
+
+* MooseFS 2.1.7-1 (2014-12-24)
+
+  - (master) fixed serious incompatibility with mounts 2.1+
+  - (master) added chunk preallocation
+  - (master) added deleting wrong versioned chunks that do not belong to any file
+  - (mount) fixed printed informations about mapall (thanks to Tom Ivar Helbekkmo)
+  - (master) fixed rmdir mapall/maproot rights check (thanks to Tom Ivar Helbekkmo)
+
+* MooseFS 2.1.6-1 (2014-12-22)
+
+  - (master) added rollback after client disconnection
+
+* MooseFS 2.1.5-1 (2014-12-19)
+
+  - (master) fixed algorithm responsible for choosing servers for new chunks
+  - (master) rollback changes when no chunkservers finished chunk ops (like create,duplicate etc.)
+
+* MooseFS 2.1.4-1 (2014-12-17)
+
+  - (cgi+cli) added labelset tables
+  - (master) minor changes in replication algorithm
+
+* MooseFS 2.1.3-1 (2014-12-15)
+
+  - (master) fixed replication algorithm (no replication for labeled chunks when one or more servers are disconnected)
+  - (cgi+cli) fixed typo (number of column for disconnected chunkservers in cli mode)
+
+* MooseFS 2.1.2-1 (2014-12-12)
+
+  - (master) added quota-licences (pro version only)
+  - (master) restrict label manipulations to mounts with 'admin' property in exports file
+
+* MooseFS 2.1.1-1 (2014-12-10)
+
+  - (tools) added tools for copying mfs attributes (mfscopygoal,mfscopytrashtime,mfscopyeattr and mfscopyquota)
+
+* MooseFS 2.1.0-1 (2014-12-04)
+
+  - (mount+master) added support for global flock locks (Linux, kernel 3.8+, libfuse 2.9+ only)
+  - (mount+master) added support for global posix locks (Linux only)
+  - (cgi+cli) added resources tab with open files and acquired locks
+  - (master) better 'wrong version' chunks handling
+  - (mount) changes in 'write' procedures (much faster random writes)
+  - (all) added support for labels (georeplication)
+
+* MooseFS 2.0.44-1 (2014-11-27)
+
+  - (master) fixed read rebalance limit
+
+* MooseFS 2.0.43-1 (2014-10-31)
+
+  - (master) introducing new licence model (new licences with size limit for pro version)
+  - (all) fixed portability issues with usleep (thanks to Tom Ivar Helbekkmo)
+  - (all) setting socket options after listen (thanks to Tom Ivar Helbekkmo)
+
+* MooseFS 2.0.42-1 (2014-10-29)
+
+  - (tools) fixed printing ip numbers in mfsfileinfo
+  - (mount) changed format of ip numbers in messages from hex to standard
+  - (master) changed format of ip numbers in some messages from hex to standard
+
+* MooseFS 2.0.41-1 (2014-10-21)
+
+  - (mount) fixed buffer overrun (FreeBSD and OS X only)
+
+* MooseFS 2.0.40-1 (2014-10-15)
+
+  - (cs) fixed serious bug (new chunks were created on disks 'marked for removal') - introduced in 1.7.31
+  - (cs) fixed bug (segfault on very rare ocassions during disk scanning just after startup - caused by damaged chunk files)
+  - (mount) fixed memory leak (supplementary group tabs) - intr. in 2.0.1
+  - (rpm) fixed systemd scripts
+  - (daemons) added increasing limit of core dump size (debugging purposes)
+
+* MooseFS 2.0.39-1 (2014-10-06)
+
+  - (mount) added ability to mount from /etc/fstab on FreeBSD
+
+* MooseFS 2.0.38-1 (2014-10-02)
+
+  - (mount) fixed memory leak in workaround on FreeBSD early-release bug (FreeBSD only)
+
+* MooseFS 2.0.37-1 (2014-09-23)
+
+  - (cs) added internal open files limit
+  - (master) changed chunkserver choosing algorithm
+
+* MooseFS 2.0.36-1 (2014-09-18)
+
+  - (cgi) fixed sorting masters by ip
+  - (master) fixed acl posix compatibility (two tests from pjd)
+  - (cs) fixed compatibility issues with master 1.6
+
+* MooseFS 2.0.35-1 (2014-09-12)
+
+  - (freebsd) fixed cgiserv and cli port
+  - (mount) fixed setting acl
+
+* MooseFS 2.0.34-1 (2014-08-21)
+
+  - (mount) workaround for bug in FreeBSD Fuse version
+  - (master) added setting correct metaid in "new" followers (pro version only)
+
+* MooseFS 2.0.33-1 (2014-08-18)
+
+  - (cs,supervisor) more reliable network code in supervisor module (pro version only)
+  - (cs,master) added check for metaid in chunkservers (also hard drives) and secondary masters
+
+* MooseFS 2.0.32-1 (2014-08-13)
+
+  - (cs) changed delay handling method (delayed file close,free crc block etc.)
+  - (mount) fixed truncate loop (fixed bug intr. in 2.0.26)
+
+* MooseFS 2.0.31-1 (2014-08-12)
+
+  - (cs) fixed bug: write data error not causing exit from write loop - sometimes could lead to segfault.
+  - (master) fixed setting data cache drop bit.
+  - (cli) fixed printed options for mfssupervisor
+
+* MooseFS 2.0.30-1 (2014-07-09)
+
+  - (daemons) added writing pid to lockfile
+  - (all) added freebsd port-maker
+
+* MooseFS 2.0.29-1 (2014-07-03)
+
+  - (cs) moved fsync to background (improved write performance)
+
+* MooseFS 2.0.28-1 (2014-06-30)
+
+  - (master) fixed syslog message about metaloggers in masters (pro version only)
+
+* MooseFS 2.0.27-1 (2014-06-27)
+
+  - (tools) added to mfsfileinfo checksum digest and file signature calculation
+
+* MooseFS 2.0.26-1 (2014-06-26)
+
+  - (cs) fixed bug in replicator
+  - (mount) fixed truncate loop
+  - (mount) fixed potential descriptor leak
+  - (master) fixed bug with duplicated chunkserver id
+
+* MooseFS 2.0.25-1 (2014-06-23)
+
+  - (mount) better handling error counters
+  - (master) fixed replication status handling
+
+* MooseFS 2.0.24-1 (2014-06-23)
+
+  - (master) added unfinished replications detection
+  - (master) added source ip and port in replication status message
+  - (cs) fixed handling job buffers
+  - (daemons) added ignoring profiling signals
+
+* MooseFS 2.0.23-1 (2014-06-18)
+
+  - (mount) changed chunkserver choosing algorithm
+  - (master) added checks for busy/operation mismatch
+  - (master) added checks for busy status during duplicate/duplicate+truncate operations
+  - (cs) added ignoring 'marked for removal' disks in internal rebalance
+
+* MooseFS 2.0.22-1 (2014-06-17)
+
+  - (master) add chunks to priority queues after chunk damage, chunk lost and set goal
+
+* MooseFS 2.0.21-1 (2014-06-17)
+
+  - (supervisor+cstool) fixed version shown
+  - (supervisor) fixed 'DEAD' master recognition routine
+  - (master) fixed segfault introduced in 2.0.20
+
+* MooseFS 2.0.20-1 (2014-06-16)
+
+  - (cs) fixed handling unfinished jobs on socket timeout
+  - (master) fixed missing chunks CHUNKDEL LEADER/FOLLOWER race condition (pro version only)
+  - (master) postpone write to undergoal chunks during registration process (wait for all cs)
+  - (master) undergoal replications have higher priority than write chunk
+  - (all) added check for EINTR status after poll in sockets module
+
+* MooseFS 2.0.19-1 (2014-06-13)
+
+  - (master+cs) added support for 'get version' packet
+  - (all) fixed licence text in source files
+
+* MooseFS 2.0.18-1 (2014-06-12)
+
+  - (cs) fixed bandwidth charts
+
+* MooseFS 2.0.17-1 (2014-06-12)
+
+  - (daemons) added 'info' handler (for future use)
+  - (master) changed median to arithmetic mean in 'new chunk' algorithm
+
+* MooseFS 2.0.16-1 (2014-06-11)
+
+  - (master+cs) added 'maxentries' to chart data packet
+  - (master) improved median usage calculations
+
+* MooseFS 2.0.15-1 (2014-06-10)
+
+  - (master) fixed floating replication limits
+
+* MooseFS 2.0.14-1 (2014-06-10)
+
+  - (master) replication limits can be defined as floating point numbers
+  - (master+cgi+cli) changed store status (background,download and foreground)
+  - (master+cgi+cli) changed option "canchangequota" to "admin"
+  - (master) added rename/unlink "metadata.mfs" in case of using '-a' option
+  - (master+cgi+cli) last save duration changed from seconds to miliseconds
+
+* MooseFS 2.0.13-1 (2014-06-09)
+
+  - (master) added separate replication limits for different cases
+  - (cs) deleting already deleted chunk returns status ok.
+
+* MooseFS 2.0.12-1 (2014-06-06)
+
+  - (mount) changed readworker behaviour in case of having no data to read
+  - (master) added block version check during metadata read
+  - (metadump) added support for newest metadata format
+  - (cs) changed format of reported ip in replicator module
+
+* MooseFS 2.0.11-1 (2014-06-03)
+
+  - (cgi) fixed missing master condition
+  - (netdump) new binary - mfsnetdump
+  - (cs) new binary - mfschunktool
+  - (master+cgi+cli) added maintenance mode to chunkservers
+  - (cli) fixed cs-commands bug
+
+* MooseFS 2.0.10-1 (2014-06-02)
+
+  - (cgi) added colors for versions
+  - (master) fixed dirinfo counters update on write in master-follower (pro version only)
+
+* MooseFS 2.0.9-1 (2014-05-30)
+
+  - (all) fixed compatibility with very old compilers
+  - (cgi) added avg line and tooltips to '%used' bars
+
+* MooseFS 2.0.8-1 (2014-05-29)
+
+  - (master) even better replication priority algorithm
+
+* MooseFS 2.0.7-1 (2014-05-28)
+
+  - (master) improved replication priority algorithm
+
+* MooseFS 2.0.6-1 (2014-05-27)
+
+  - (master) added replication priority "pseudomissing->endangered->undergoal->rebalance"
+  - (master) added option for setting metadata download frequency (pro version only)
+
+* MooseFS 2.0.5-1 (2014-05-26)
+
+  - (master) fixed finding best metadata file (-a option)
+  - (cs) fixed infinite loop condition in sockets module
+
+* MooseFS 2.0.4-1 (2014-05-22)
+
+  - (master+mount) fixed "chunk lost" condition during cs registration
+  - (mount) fixed support for "tail -f"
+  - (master) fixed xattr snapshot bug (attr name length not copied)
+
+* MooseFS 2.0.3-1 (2014-05-20)
+
+  - (master) autorepair chunk version for standard scenarios
+  - (master) fixed dealing with chunks that doesn't exist in metadata
+  - (master) fixed status returned by CHUNKADD/CHUNKDEL
+  - (all) faster endian conversions
+
+* MooseFS 2.0.2-1 (2014-05-15)
+
+  - (mount) turn on posix-ACL's by default
+  - (mount) add release number to version reporting (in df -i)
+
+* MooseFS 2.0.1-1 (2014-05-14)
+
+  - (master) download meta file from followers
+  - (master) added "get paths" and "get parents" commands
+  - (master) added ability to send directories in parts
+  - (master) keep network connections alive during long operations
+  - (all) keep CL-CS and CS-CS connections alive between operations
+  - (mount) fixed race-condition in read module
+  - (mount) fixed local buffer lock in 'oplog'
+  - (cs) fixed race condition in resolver
+  - (mount) fixed truncate in read module
+  - (master) fixed new chunk/delete chunk constants
+  - (master+mount) implementing full support for posix-ACL's
+  - (master+mount+tools) move permission checking from kernel to master
+
+* MooseFS 1.7.31 (2014-04-01)
+
+  - (cs) fixed choosing disk algorithm
+  - (cs) removed (some) unimportant syslog messages
+  - (cs) tuning glibc malloc arenas
+  - (cs) fixed protocol autonegotiation
+  - (cs) fixed CS-CS and CS-CL communication charts
+
+* MooseFS 1.7.30 (2014-03-26)
+
+  - (cs) fixed compatibility with mfs 1.6
+  - (mount) fixed "no xattr" bit bug (intr. in 1.7.25)
+
+* MooseFS 1.7.29 (2014-03-26)
+
+  - (cs) fixed descriptor leak (intr. in 1.7.25)
+
+* MooseFS 1.7.28 (2014-03-11)
+
+  - (all) fixed thread creation routine (introduced in 1.7.24)
+
+* MooseFS 1.7.27 (2014-03-11)
+
+  - (cs) added memory chart
+  - (master+cs) added virtual memory usage to memory charts
+  - (cs) fixed race condition in charts (introduced in 1.7.25)
+  - (cgi+cli) fixed cs charts
+
+* MooseFS 1.7.26 (2014-03-05)
+
+  - (master+mount) create file using one command
+
+* MooseFS 1.7.25 (2014-02-27)
+
+  - (all) fixed another bug in new network module (introduced in 1.7.21 and 1.7.22)
+  - (cs) new I/O model
+  - (master) added xattr flag
+  - (master) added copying xattrs during snapshot (cp-like version)
+  - (master) changed metadata version handling
+  - (master) changed node structure (RAM and HDD)
+  - (master+cs) added chunkserver id (identyfying cs in master)
+  - (master+cs) new registration algorithm (vers. 6)
+  - (master+mount) "no xattr" bit in file attr
+
+* MooseFS 1.7.24 (2014-02-19)
+
+  - (mount) fixed xattr cache bug
+  - (master) fixed ENOSPC condition after switching
+  - (cgi+cli) fixed sortkeys for hdd write bandwidth
+  - (master) turn off internal supervisor if there are connections from external supervisor
+  - (cs) added common routine for thread creation
+
+* MooseFS 1.7.23 (2014-02-06)
+
+  - (master) bug fix version (bugs introduced in 1.7.21 and 1.7.22)
+
+* MooseFS 1.7.22 (2014-02-05)
+
+  - (master) fixed cs disconnection (make master responsive during disconnection)
+
+* MooseFS 1.7.21 (2014-02-05)
+
+  - (master) fixed master<->chunkserver network module (make master responsive during chunk registration)
+
+* MooseFS 1.7.20 (2014-02-03)
+
+  - (mount) added negative lookup cache
+
+* MooseFS 1.7.19 (2014-01-30)
+
+  - (mount) added xattr cache
+
+* MooseFS 1.7.18 (2014-01-29)
+
+  - (mount) setting FUSE capabilities (improved efficiency)
+  - (cs) fixed disk choosing algorithm
+
+* MooseFS 1.7.17 (2014-01-28)
+
+  - (cs) fixed mutex double-lock error (introduced in 1.7.14)
+  - (master) improved calculation of init hash size
+
+* MooseFS 1.7.16 (2014-01-22)
+
+  - (master+cgi+cli) memory usage detailed report
+  - (master+cs+ml) fixed starvation scenario in network modules
+
+* MooseFS 1.7.15 (2014-01-15)
+
+  - (master+cs) new charts prepared for mfs 2.0
+  - (cs) options for transfering data between disks
+
+* MooseFS 1.7.14 (2014-01-08)
+
+  - (master) added simple supervisor (allow start masters without manual supervisor)
+  - (cs) fixed internal rebalance algorithm
+  - (cgi+cli) new class for mfs communication
+  - (cgi+cli) introduced pro/ce version (for forthcoming mfs 2.0)
+
+* MooseFS 1.7.13 (2013-12-12)
+
+  - (cs) added rebalance utilization limit option
+  - (cs) added error tolerance options
+
+* MooseFS 1.7.12 (2013-12-11)
+
+  - (master) fixed metadata synchronization bug (HUP detected to early)
+  - (master) fixed metadata synchronization bug (settrashtime,setgoal,seteattr)
+  - (master+cs) changed cs/disk choosing algorithm (random->rr and using only servers/disks close to median)
+  - (cs) added rebalancing of disks usage
+
+* MooseFS 1.7.11 (2013-11-22)
+
+  - (mount) fixed read/write bug (status EAGAIN on read/write caused EIO)
+  - (cli) added user defined separator
+  - (cgi+cli) display licence data
+
+* MooseFS 1.7.10 (2013-11-21)
+
+  - (master) added licences for version pro
+  - (mount) fixed very rare race condition (fuse context)
+
+* MooseFS 1.7.9 (2013-11-12)
+
+  - (master) fixed chunk deletions during chunkserver disconnection
+  - (daemons) fixed 'stop' status (ok when daemon is already stopped)
+  - (daemons) added 'try-restart' action
+  - (all) fixed status returned from socket operations
+  - (mount) add ignoring SIGPIPE
+  - (all) improved crc32 calculation (1.7 times faster)
+
+* MooseFS 1.7.8 (2013-11-05)
+
+  - (master) new 'open files' module (also fixed some bugs)
+  - (master) better management of chunks deletion in master
+  - (master) fixed bug (adding chunkservers by ELECT)
+  - (cgi+cli) added displaying disconnected sessions
+  - (master+cgi+cli) added option to remove disconnected sessions
+
+* MooseFS 1.7.7 (2013-10-22)
+
+  - (master+cs) added ability to change leader on demand
+  - (mount) fixed couple of small bugs in new "read data" module
+  - (supervisor) fixed connecting bugs
+  - (master) added progress info during metadata restoring
+  - (master) fixed net timeouts (fixing time after long operations)
+  - (mount) fixed connection problems when one master is dead
+
+* MooseFS 1.7.6 (2013-09-20)
+
+  - (master) imporoved chunk hashmap
+
+* MooseFS 1.7.5 (2013-09-12)
+
+  - (master) fixed network timeouts for data transfer
+  - (master) changed hashmaps
+  - (cgi) BUSY state detection (mainly during data transfer)
+
+* MooseFS 1.7.4 (2013-08-14)
+
+  - (mount) read procedures have been rewritten (with read ahead support)
+  - (mount) read+write dynamic number of workers
+  - (cs) dynamic number of workers
+  - (cs) fixed segfault condition during closing application
+  - (master) improved memory allocation
+  - (master) improved hashmaps
+  - (master) fixed bug (sending changelogs to desynchronized followers)
+  - (master) fixed bug (cs added to metadata in desynchronized followers)
+  - (master) imporoved sending old changelogs (sending in groups)
+
+* MooseFS 1.7.3 (2013-07-30)
+
+  - (man) automatically set release date and version
+  - (cgiserv) fixed lock-file issue (early truncate - introduced in 1.7.1)
+  - (master+mount) when chunk is definitely lost then do not wait for it in clients
+  - (cs) reduced amount of space reports to master (inspired by Davies Liu)
+  - (mount) imporved write efficiency (inspired by Davies Liu)
+  - (master) fixed 'rename/mv' bug in metarestore
+  - (master) fixed csdb cleanup bug
+  - (master) added SYNC/DESYNC to state description in syslog
+  - (supervisor) imporved connecting to masters
+
+* MooseFS 1.7.2 (2013-07-12)
+
+  - (cgi+cli) fixed recognition of using wrong DNS name
+  - (cgi+cli) fixed commands bug in cli mode
+  - (cgi+cli) added inputs for master host name and ports
+  - (all) fixed distclean (automake strange behavior)
+
+* MooseFS 1.7.1 (2013-07-11)
+
+  - (cgi+cli) simple support for master-ha
+  - (cgi+cli) fixed path bug introduced in 1.7.0
+  - (all) added default-mastername and default-portbase options to configure script
+  - (mount) fixed reconnecting to ELECT
+  - (cgiserv) fixed pidfile bug
+
+* MooseFS 1.7.0 (2013-07-05)
+
+  - (cgi+cli) mfs.cgi can be used also in CLI mode (for monitoring scripts etc.)
+  - (dist) CGI permissions fix in RPM packaging
+  - (dist) preliminary systemd support inspired by Arch Linux
+  - (master+tools) added building files from particular chunks (manual file recovery)
+  - (cs) join master tasks queue and client tasks queue into one tasks queue.
+  - (cgi+cli) added chunkserver 'load' charts.
+  - (cgi+cli) added 'load' column in chunkservers table
+  - (master+cs) simple chunkserver overload detection
+  - (master) 'grace' state for chunkservers - after overload detection given chunkserver is in 'grace' state for some time - new chunks are not created on that server in this state
+  - (cgi+cli+master) turn off 'grace' state
+  - (master) in 'noowner' i-nodes mode copy 'owner' bits to 'group' and 'other' bits
+  - (common) increase time events frequency
+  - (master) increase freqency of chunk-loop task (1 per second to 50 per seconds)
+  - (mount) fixed invalidate open-dir dentry cache
+  - (master) fixed sustaining old sessions by clients who can't properly register
+  - (cs) improved efficiency (removed lock in network thread)
+  - (master) fixed chunkserver disconnection handling (remove server data form chunks 'in background')
+  - (master) changed directory size (from GB to 'floating point' numbers, size nxxxxyy = xxxx.yy * 2^(10*n), f.e. 2053189 = 531.89MB)
+  - (master+tools) added mfssnapshot option (cp-like mode) - set files ownership to user who makes snapshot.
+  - (cgi+cli) python scripts where made Python 3 compatible
+  - (all) added support for quota (per directory)
+  - (all) added support for xattr's (without special ACL treatment)
+  - (master) fixed dirinfo calculation bug (symbolic link snapshots)
+  - (all) added support for high availability
+  - (master) added meterestore option (mfsmetarestore is now included in mfsmaster)
+
 * MooseFS 1.6.27 (2012-08-09)
 
-  - (mfsrestore) fixed bug - freeing filenames memory too early
+  - (metarestore) fixed bug - freeing filenames memory too early
   - (all) added initial support for extra attributes (xattr), which will be introduced in upcoming version 1.7
   - (master+metalogger) better change log synchronization (storage in master memory and sending expected version in metalogger - inspired by Davies Liu)
   - (master) acceptable difference of percent of hdd usage added to configuration (up to this version this parameter was constantly set to 0.01% - patch contributed by Davies Liu)
@@ -55,9 +808,9 @@ This file lists noteworthy changes in MooseFS.
   - (mount) more dynamic write cache management (changed condition ib<tb/5 to ib<3*fb where: ib - inode blocks in cache, tb - total blocks in cache, fb - free block in cache)
   - (master) save metadata file to alternative locations in case of error
   - (all) increased file length limit from 2TiB to 128PiB
-  - (mfscgiserv) fixed directory traversal vulnerability
-  - (mfscgiserv) added lockfile/pidfile and actions such as 'start', 'stop', 'restart' and 'test'.
-  - (mfsmount) fixed parsing file with defaults
+  - (cgiserv) fixed directory traversal vulnerability
+  - (cgiserv) added lockfile/pidfile and actions such as 'start', 'stop', 'restart' and 'test'.
+  - (mount) fixed parsing file with defaults
 
 * MooseFS 1.6.22 (2011-05-09)
 
@@ -108,7 +861,7 @@ This file lists noteworthy changes in MooseFS.
   - (all) fixed some minor bugs and potential race conditions (makes valgrind happy)
   - (cs) added ability to use read-only disks in "marked for removal" mode (to retrieve missing chunks from damaged disks)
   - (cs) added showing scanning progress during startup
-  - (all/master) added releasing used resources at the end.
+  - (all/master) added releasing used resources at the end
   - (all) changed some malloc/free allocations into mmap/munmap
   - (all) new error messages routines
   - (daemons) added proper handling SIGINT in "foreground" mode
@@ -170,9 +923,7 @@ This file lists noteworthy changes in MooseFS.
 
   - fixed errors introduced in 1.6.9
   - added 'reload' command to master
-  - split chunk counters into 'all' and 'regular' (new approach to disks
-   removal - since this version chunks on 'marked for removal' disks are not
-   deleted)
+  - split chunk counters into 'all' and 'regular' (new approach to disks removal - since this version chunks on 'marked for removal' disks are not deleted)
 
 * MooseFS 1.6.9 (2009-11-24)
 
@@ -227,68 +978,29 @@ This file lists noteworthy changes in MooseFS.
   - Added source (read) limit to replications
   - Prefer localhost during some operations (reduce network usage)
 
-* MooseFS 1.6.0 (not released - only available in public repository)
+* MooseFS 1.6.0 (2009-07-01)
 
- Common:
-  - Removed duplicate source files.
-  - Strip whitespace at the end of configuration file lines.
-
- Chunkserver:
-  - Rewritten in multi-threaded model.
-  - Added periodical chunk testing functionality (HDD_TEST_FREQ option).
-  - New -v option (prints version and exits).
-
- Master:
-  - Added "noowner" objects flag (causes objects to belong to current user).
-  - Maintaining `mfsdirinfo` data online, so it doesn't need to be calculated
-   on every request.
-  - Filesystem access authorization system (NFS-like mfsexports.cfg file,
-   REJECT_OLD_CLIENTS option) with ro/rw, password and maproot
-   functionality.
-  - New -v option (prints version and exits).
-
- Mount:
-  - Rewritten options parsing in mount-like way, making possible to use
-   standard FUSE mount utilities (see mfsmount(8) manual for new syntax).
-   Note: old syntax is no longer accepted and mountpoint is mandatory now
-   (there is no default).
-  - Updated for FUSE 2.6+.
-  - Added password, file data cache, attribute cache and entry cache options.
-   By default attribute cache and directory entry cache are enabled,
-   file data cache and file entry cache are disabled.
-  - opendir() no longer reads directory contents - it's done on first
-   readdir() now; fixes "rm -r" on recent Linux/glibc/coreutils combo.
-  - Fixed mtime setting just before close() (by flushing file on mtime
-   change); fixes mtime preserving on "cp -p".
-  - Added statistics accessible through MFSROOT/.stats pseudo-file.
-  - Changed master access method for mfstools (direct .master pseudo-file
-   replaced by .masterinfo redirection); fixes possible mfstools race
-   condition and allows to use mfstools on read-only filesystem.
-
- Tools:
-  - Units cleanup in values display (exact values, IEC-60027/binary prefixes,
-   SI/decimal prefixes); new options: -n, -h, -H and MFSHRFORMAT environment
-   variable - refer to mfstools(8) manual for details).
-  - mfsrgetgoal, mfsrsetgoal, mfsrgettrashtime, mfsrsettrashtime have been
-   deprecated in favour of new "-r" option for mfsgetgoal, mfssetgoal,
-   mfsgettrashtime, mfssettrashtime tools.
-  - mfssnapshot utility replaced by mfsappendchunks (direct descendant of
-   old utility) and mfsmakesnapshot (which creates "real" recursive
-   snapshots and behaves similar to "cp -r").
-  - New mfsfilerepair utility, which allows partial recovery of file with
-   some missing or broken chunks.
-
- CGI scripts:
-  - First public version of CGI scripts allowing to monitor MFS installation
-   from WWW browser.
-
-* MooseFS 1.5.14
-
-   Not released to public.
-
-* MooseFS 1.5.13
-
-   Not released to public.
+  - (all) Removed duplicate source files.
+  - (all) Strip whitespace at the end of configuration file lines.
+  - (cs) Rewritten in multi-threaded model.
+  - (cs) Added periodical chunk testing functionality (HDD_TEST_FREQ option).
+  - (cs) New -v option (prints version and exits).
+  - (master) Added "noowner" objects flag (causes objects to belong to current user).
+  - (master) Maintaining `mfsdirinfo` data online, so it doesn't need to be calculated on every request.
+  - (master) Filesystem access authorization system (NFS-like mfsexports.cfg file, REJECT_OLD_CLIENTS option) with ro/rw, password and maproot functionality.
+  - (master) New -v option (prints version and exits).
+  - (mount) Rewritten options parsing in mount-like way, making possible to use standard FUSE mount utilities (see mfsmount(8) manual for new syntax). Note: old syntax is no longer accepted and mountpoint is mandatory now (there is no default).
+  - (mount) Updated for FUSE 2.6+.
+  - (mount) Added password, file data cache, attribute cache and entry cache options. By default attribute cache and directory entry cache are enabled, file data cache and file entry cache are disabled.
+  - (mount) opendir() no longer reads directory contents - it's done on first readdir() now; fixes "rm -r" on recent Linux/glibc/coreutils combo.
+  - (mount) Fixed mtime setting just before close() (by flushing file on mtime change); fixes mtime preserving on "cp -p".
+  - (mount) Added statistics accessible through MFSROOT/.stats pseudo-file.
+  - (mount) Changed master access method for mfstools (direct .master pseudo-file replaced by .masterinfo redirection); fixes possible mfstools race condition and allows to use mfstools on read-only filesystem.
+  - (tools) Units cleanup in values display (exact values, IEC-60027/binary prefixes, SI/decimal prefixes); new options: -n, -h, -H and MFSHRFORMAT environment variable - refer to mfstools(8) manual for details).
+  - (tools) mfsrgetgoal, mfsrsetgoal, mfsrgettrashtime, mfsrsettrashtime have been deprecated in favour of new "-r" option for mfsgetgoal, mfssetgoal, mfsgettrashtime, mfssettrashtime tools.
+  - (tools) mfssnapshot utility replaced by mfsappendchunks (direct descendant of old utility) and mfsmakesnapshot (which creates "real" recursive snapshots and behaves similar to "cp -r").
+  - (tools) New mfsfilerepair utility, which allows partial recovery of file with some missing or broken chunks.
+  - (cgi) First public version of CGI scripts allowing to monitor MFS installation from WWW browser.
 
 * MooseFS 1.5.12 (2009-01-28)
 
@@ -309,8 +1021,7 @@ This file lists noteworthy changes in MooseFS.
 
   - Improved rebalancing algorithm.
   - Protections against overriding metadata.mfs.back by older metadata.mfs.
-  - Fixes to build mfstools, mfsmaster and mfsmetarestore with Large File
-   Support on Linux (previously only mfsmount had LFS enabled).
+  - Fixes to build mfstools, mfsmaster and mfsmetarestore with Large File Support on Linux (previously only mfsmount had LFS enabled).
   - Less verbose logging in mfsmaster.
   - Log chunkserver disconnections in mfsmaster.
 

@@ -1,28 +1,33 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
 
 #include <fuse_lowlevel.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 
+#include "massert.h"
 #include "datapack.h"
 
 typedef struct _dircache {
@@ -148,25 +153,25 @@ void* dcache_new(const struct fuse_ctx *ctx,uint32_t parent,const uint8_t *dbuff
 	d->hashsize = 0;
 	d->namehashtab = NULL;
 	d->inodehashtab = NULL;
-	pthread_mutex_lock(&glock);
+	zassert(pthread_mutex_lock(&glock));
 	if (head) {
 		head->prev = &(d->next);
 	}
 	d->next = head;
 	d->prev = &head;
 	head = d;
-	pthread_mutex_unlock(&glock);
+	zassert(pthread_mutex_unlock(&glock));
 	return d;
 }
 
 void dcache_release(void *r) {
 	dircache *d = (dircache*)r;
-	pthread_mutex_lock(&glock);
+	zassert(pthread_mutex_lock(&glock));
 	if (d->next) {
 		d->next->prev = d->prev;
 	}
 	*(d->prev) = d->next;
-	pthread_mutex_unlock(&glock);
+	zassert(pthread_mutex_unlock(&glock));
 	if (d->namehashtab) {
 		free(d->namehashtab);
 	}
@@ -218,7 +223,27 @@ static inline uint8_t dcache_inodesearch(const uint8_t *dbuff,uint32_t dsize,uin
 }
 */
 
-static inline uint8_t dcache_namehashsearch(dircache *d,uint8_t nleng,const uint8_t *name,uint32_t *inode,uint8_t attr[35]) {
+static inline void dcache_namehash_invalidate(dircache *d,uint8_t nleng,const uint8_t *name) {
+	uint32_t hash,disp,hashmask;
+	const uint8_t *ptr;
+
+	if (d->namehashtab==NULL) {
+		dcache_makenamehash(d);
+	}
+	hashmask = d->hashsize-1;
+	hash = dcache_hash(name,nleng);
+	disp = ((hash*0x53B23891)&hashmask)|1;
+	while ((ptr=d->namehashtab[hash&hashmask])) {
+		if (*ptr==nleng && memcmp(ptr+1,name,nleng)==0) {
+			ptr+=1+nleng;
+			memset((uint8_t*)ptr,0,sizeof(uint32_t)+35);
+			return;
+		}
+		hash+=disp;
+	}
+}
+
+static inline uint8_t dcache_namehash_get(dircache *d,uint8_t nleng,const uint8_t *name,uint32_t *inode,uint8_t attr[35]) {
 	uint32_t hash,disp,hashmask;
 	const uint8_t *ptr;
 
@@ -232,15 +257,19 @@ static inline uint8_t dcache_namehashsearch(dircache *d,uint8_t nleng,const uint
 		if (*ptr==nleng && memcmp(ptr+1,name,nleng)==0) {
 			ptr+=1+nleng;
 			*inode = get32bit(&ptr);
-			memcpy(attr,ptr,35);
-			return 1;
+			if (*ptr) { // are attributes valid ?
+				memcpy(attr,ptr,35);
+				return 1;
+			} else {
+				return 0;
+			}
 		}
 		hash+=disp;
 	}
 	return 0;
 }
 
-static inline uint8_t dcache_inodehashsearch(dircache *d,uint32_t inode,uint8_t attr[35]) {
+static inline uint8_t dcache_inodehash_get(dircache *d,uint32_t inode,uint8_t attr[35]) {
 	uint32_t hash,disp,hashmask;
 	const uint8_t *ptr;
 
@@ -252,7 +281,51 @@ static inline uint8_t dcache_inodehashsearch(dircache *d,uint32_t inode,uint8_t 
 	disp = ((inode*0x53B23891)&hashmask)|1;
 	while ((ptr=d->inodehashtab[hash&hashmask])) {
 		if (inode==get32bit(&ptr)) {
-			memcpy(attr,ptr,35);
+			if (*ptr) { // are attributes valid ?
+				memcpy(attr,ptr,35);
+				return 1;
+			} else {
+				return 0;
+			}
+		}
+		hash+=disp;
+	}
+	return 0;
+}
+
+static inline uint8_t dcache_inodehash_set(dircache *d,uint32_t inode,const uint8_t attr[35]) {
+	uint32_t hash,disp,hashmask;
+	const uint8_t *ptr;
+
+	if (d->inodehashtab==NULL) {
+		dcache_makeinodehash(d);
+	}
+	hashmask = d->hashsize-1;
+	hash = inode*0xB28E457D;
+	disp = ((inode*0x53B23891)&hashmask)|1;
+	while ((ptr=d->inodehashtab[hash&hashmask])) {
+		if (inode==get32bit(&ptr)) {
+			memcpy((uint8_t*)ptr,attr,35);
+			return 1;
+		}
+		hash+=disp;
+	}
+	return 0;
+}
+
+static inline uint8_t dcache_inodehash_invalidate_attr(dircache *d,uint32_t inode) {
+	uint32_t hash,disp,hashmask;
+	const uint8_t *ptr;
+
+	if (d->inodehashtab==NULL) {
+		dcache_makeinodehash(d);
+	}
+	hashmask = d->hashsize-1;
+	hash = inode*0xB28E457D;
+	disp = ((inode*0x53B23891)&hashmask)|1;
+	while ((ptr=d->inodehashtab[hash&hashmask])) {
+		if (inode==get32bit(&ptr)) {
+			memset((uint8_t*)ptr,0,35);
 			return 1;
 		}
 		hash+=disp;
@@ -262,30 +335,59 @@ static inline uint8_t dcache_inodehashsearch(dircache *d,uint32_t inode,uint8_t 
 
 uint8_t dcache_lookup(const struct fuse_ctx *ctx,uint32_t parent,uint8_t nleng,const uint8_t *name,uint32_t *inode,uint8_t attr[35]) {
 	dircache *d;
-	pthread_mutex_lock(&glock);
+	zassert(pthread_mutex_lock(&glock));
 	for (d=head ; d ; d=d->next) {
 		if (parent==d->parent && ctx->pid==d->ctx.pid && ctx->uid==d->ctx.uid && ctx->gid==d->ctx.gid) {
-			if (dcache_namehashsearch(d,nleng,name,inode,attr)) {
-				pthread_mutex_unlock(&glock);
+			if (dcache_namehash_get(d,nleng,name,inode,attr)) {
+				zassert(pthread_mutex_unlock(&glock));
 				return 1;
 			}
 		}
 	}
-	pthread_mutex_unlock(&glock);
+	zassert(pthread_mutex_unlock(&glock));
 	return 0;
 }
 
 uint8_t dcache_getattr(const struct fuse_ctx *ctx,uint32_t inode,uint8_t attr[35]) {
 	dircache *d;
-	pthread_mutex_lock(&glock);
+	zassert(pthread_mutex_lock(&glock));
 	for (d=head ; d ; d=d->next) {
 		if (ctx->pid==d->ctx.pid && ctx->uid==d->ctx.uid && ctx->gid==d->ctx.gid) {
-			if (dcache_inodehashsearch(d,inode,attr)) {
-				pthread_mutex_unlock(&glock);
+			if (dcache_inodehash_get(d,inode,attr)) {
+				zassert(pthread_mutex_unlock(&glock));
 				return 1;
 			}
 		}
 	}
-	pthread_mutex_unlock(&glock);
+	zassert(pthread_mutex_unlock(&glock));
 	return 0;
+}
+
+void dcache_setattr(uint32_t inode,const uint8_t attr[35]) {
+	dircache *d;
+	zassert(pthread_mutex_lock(&glock));
+	for (d=head ; d ; d=d->next) {
+		dcache_inodehash_set(d,inode,attr);
+	}
+	zassert(pthread_mutex_unlock(&glock));
+}
+
+void dcache_invalidate_attr(uint32_t inode) {
+	dircache *d;
+	zassert(pthread_mutex_lock(&glock));
+	for (d=head ; d ; d=d->next) {
+		dcache_inodehash_invalidate_attr(d,inode);
+	}
+	zassert(pthread_mutex_unlock(&glock));
+}
+
+void dcache_invalidate_name(const struct fuse_ctx *ctx,uint32_t parent,uint8_t nleng,const uint8_t *name) {
+	dircache *d;
+	zassert(pthread_mutex_lock(&glock));
+	for (d=head ; d ; d=d->next) {
+		if (parent==d->parent && ctx->pid==d->ctx.pid && ctx->uid==d->ctx.uid && ctx->gid==d->ctx.gid) {
+			dcache_namehash_invalidate(d,nleng,name);
+		}
+	}
+	zassert(pthread_mutex_unlock(&glock));
 }

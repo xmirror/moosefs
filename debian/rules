@@ -26,9 +26,6 @@ CROSS= --build $(DEB_BUILD_GNU_TYPE)
 endif
 
 
-
-
-
 config.status: configure
 	dh_testdir
 	# Add here commands to configure the package.
@@ -69,7 +66,7 @@ build-indep-stamp:  config.status
 clean: 
 	dh_testdir
 	dh_testroot
-	rm -f build-arch-stamp build-indep-stamp 
+	rm -f build-arch-stamp build-indep-stamp
 
 	# Add here commands to clean up after the build process.
 	[ ! -f Makefile ] || $(MAKE) distclean
@@ -78,6 +75,7 @@ clean:
 	dh_clean 
 
 install: install-indep install-arch
+
 install-indep:
 	dh_testdir
 	dh_testroot
@@ -102,6 +100,7 @@ install-arch:
 	$(MAKE) DESTDIR=$(CURDIR)/debian/tmp install
 
 	dh_install -s --sourcedir=debian/tmp
+
 # Must not depend on anything. This is to be called by
 # binary-arch/binary-indep
 # in another 'make' thread.
@@ -115,18 +114,19 @@ binary-common:
 	dh_installinit
 	dh_installman
 	dh_link
-	dh_strip
+	dh_strip --dbg-package=moosefs-dbg
 	dh_compress
 	dh_fixperms
 #	dh_makeshlibs
 	dh_installdeb
 	dh_shlibdeps
-#	dh_shlibdeps -Lmfs-master
-#	dh_shlibdeps -Lmfs-chunkserver
-#	dh_shlibdeps -Lmfs-client
+#	dh_shlibdeps -Lmoosefs_pro-master
+#	dh_shlibdeps -Lmoosefs_pro-chunkserver
+#	dh_shlibdeps -Lmoosefs_pro-client
 	dh_gencontrol
 	dh_md5sums
 	dh_builddeb
+
 # Build architecture independant packages using the common target.
 binary-indep: build-indep install-indep
 	$(MAKE) -f debian/rules DH_OPTIONS=-i binary-common
@@ -136,4 +136,5 @@ binary-arch: build-arch install-arch
 	$(MAKE) -f debian/rules DH_OPTIONS=-s binary-common
 
 binary: binary-arch binary-indep
-.PHONY: build clean binary-indep binary-arch binary install install-indep install-arch 
+
+.PHONY: build clean binary-indep binary-arch binary install install-indep install-arch

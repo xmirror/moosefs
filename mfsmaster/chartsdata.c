@@ -1,49 +1,25 @@
 /*
-   Copyright 2005-2010 Jakub Kruszona-Zawadzki, Gemius SA.
-
-   This file is part of MooseFS.
-
-   MooseFS is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, version 3.
-
-   MooseFS is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with MooseFS.  If not, see <http://www.gnu.org/licenses/>.
+ * Copyright (C) 2015 Jakub Kruszona-Zawadzki, Core Technology Sp. z o.o.
+ * 
+ * This file is part of MooseFS.
+ * 
+ * MooseFS is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 2 (only).
+ * 
+ * MooseFS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with MooseFS; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * or visit http://www.gnu.org/licenses/gpl-2.0.html
  */
 
+#ifdef HAVE_CONFIG_H
 #include "config.h"
-
-#if defined(HAVE_GETRUSAGE) && defined(HAVE_STRUCT_RUSAGE_RU_MAXRSS)
-#  include <sys/types.h>
-#  ifdef HAVE_SYS_RESOURCE_H
-#    include <sys/resource.h>
-#  endif
-#  ifdef HAVE_SYS_RUSAGE_H
-#    include <sys/rusage.h>
-#  endif
-#  ifndef RUSAGE_SELF
-#    define RUSAGE_SELF 0
-#  endif
-#  define MEMORY_USAGE 1
-#endif
-
-#if defined(HAVE_SETITIMER)
-#  include <sys/time.h>
-#  ifndef ITIMER_REAL
-#    define ITIMER_REAL 0
-#  endif
-#  ifndef ITIMER_VIRTUAL
-#    define ITIMER_VIRTUAL 1
-#  endif
-#  ifndef ITIMER_PROF
-#    define ITIMER_PROF 2
-#  endif
-#  define CPU_USAGE 1
 #endif
 
 #include <time.h>
@@ -62,7 +38,12 @@
 #include "chunks.h"
 #include "filesystem.h"
 #include "matoclserv.h"
+#include "memusage.h"
+#include "cpuusage.h"
 
+#include "chartsdefs.h"
+
+#if 0
 #define CHARTS_FILENAME "stats.mfs"
 
 #define CHARTS_UCPU 0
@@ -85,13 +66,14 @@
 #define CHARTS_OPEN 17
 #define CHARTS_READ 18
 #define CHARTS_WRITE 19
-#define CHARTS_MEMORY 20
+#define CHARTS_MEMORY_RSS 20
 #define CHARTS_PACKETSRCVD 21
 #define CHARTS_PACKETSSENT 22
 #define CHARTS_BYTESRCVD 23
 #define CHARTS_BYTESSENT 24
+#define CHARTS_MEMORY_VIRT 25
 
-#define CHARTS 25
+#define CHARTS 26
 
 /* name , join mode , percent , scale , multiplier , divisor */
 #define STATDEFS { \
@@ -115,114 +97,59 @@
 	{"open"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"read"         ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"write"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_NONE ,   1, 1}, \
-	{"memory"       ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{"memoryrss"    ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{"prcvd"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
 	{"psent"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,1000,60}, \
 	{"brcvd"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
 	{"bsent"        ,CHARTS_MODE_ADD,0,CHARTS_SCALE_MILI ,8000,60}, \
+	{"memoryvirt"   ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
 	{NULL           ,0              ,0,0                 ,   0, 0}  \
 };
 
 #define CALCDEFS { \
+	CHARTS_CALCDEF(CHARTS_MAX(CHARTS_CONST(0),CHARTS_SUB(CHARTS_MEMORY_VIRT,CHARTS_MEMORY_RSS))), \
 	CHARTS_DEFS_END \
 };
 
 /* c1_def , c2_def , c3_def , join mode , percent , scale , multiplier , divisor */
 #define ESTATDEFS { \
-	{CHARTS_DIRECT(CHARTS_UCPU)        ,CHARTS_DIRECT(CHARTS_SCPU)        ,CHARTS_NONE                       ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,60}, \
-	{CHARTS_NONE                       ,CHARTS_NONE                       ,CHARTS_NONE                       ,0              ,0,0                 ,   0, 0}  \
+	{CHARTS_DIRECT(CHARTS_UCPU)        ,CHARTS_DIRECT(CHARTS_SCPU)            ,CHARTS_NONE                       ,CHARTS_MODE_ADD,1,CHARTS_SCALE_MICRO, 100,60}, \
+	{CHARTS_CALC(0)                    ,CHARTS_DIRECT(CHARTS_MEMORY_RSS)      ,CHARTS_NONE                       ,CHARTS_MODE_MAX,0,CHARTS_SCALE_NONE ,   1, 1}, \
+	{CHARTS_NONE                       ,CHARTS_NONE                           ,CHARTS_NONE                       ,0              ,0,0                 ,   0, 0}  \
 };
-
+#endif
 static const uint32_t calcdefs[]=CALCDEFS
 static const statdef statdefs[]=STATDEFS
 static const estatdef estatdefs[]=ESTATDEFS
 
-#ifdef CPU_USAGE
-static struct itimerval it_set;
-#endif
-#ifdef MEMORY_USAGE
-static uint64_t memusage;
-#endif
+static uint64_t rss,virt;
+static uint64_t scpu,ucpu;
 
-uint64_t chartsdata_memusage(void) {
-	return memusage;
+void chartsdata_resusage(uint64_t *mem,uint64_t *syscpu,uint64_t *usrcpu) {
+	*mem = rss;
+	*syscpu = scpu;
+	*usrcpu = ucpu;
 }
 
 void chartsdata_refresh(void) {
 	uint64_t data[CHARTS];
 	uint32_t fsdata[16];
 	uint32_t i,del,repl; //,bin,bout,opr,opw,dbr,dbw,dopr,dopw,repl;
-#ifdef CPU_USAGE
-	struct itimerval uc,pc;
-	uint32_t ucusec,pcusec;
-#endif
-#ifdef MEMORY_USAGE
-	struct rusage ru;
-#endif
 
 	for (i=0 ; i<CHARTS ; i++) {
 		data[i]=CHARTS_NODATA;
 	}
 
-#ifdef CPU_USAGE
-// CPU usage
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
-
-	if (uc.it_value.tv_sec<=999) {	// on fucken linux timers can go backward !!!
-		uc.it_value.tv_sec = 999-uc.it_value.tv_sec;
-		uc.it_value.tv_usec = 999999-uc.it_value.tv_usec;
-	} else {
-		uc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
-	}
-	if (pc.it_value.tv_sec<=999) {	// as abowe - who the hell has invented this stupid os !!!
-		pc.it_value.tv_sec = 999-pc.it_value.tv_sec;
-		pc.it_value.tv_usec = 999999-pc.it_value.tv_usec;
-	} else {
-		pc.it_value.tv_sec = 0;
-		uc.it_value.tv_usec = 0;
+	cpu_used(&scpu,&ucpu);
+	if (scpu>0 || ucpu>0) {
+		data[CHARTS_UCPU] = (ucpu*6)/100;
+		data[CHARTS_SCPU] = (scpu*6)/100;
 	}
 
-	ucusec = uc.it_value.tv_sec*1000000U+uc.it_value.tv_usec;
-	pcusec = pc.it_value.tv_sec*1000000U+pc.it_value.tv_usec;
-
-	if (pcusec>ucusec) {
-		pcusec-=ucusec;
-	} else {
-		pcusec=0;
+	if (mem_used(&rss,&virt)) {
+		data[CHARTS_MEMORY_RSS] = rss;
+		data[CHARTS_MEMORY_VIRT] = virt;
 	}
-	data[CHARTS_UCPU] = ucusec;
-	data[CHARTS_SCPU] = pcusec;
-#endif
-
-// memory usage
-#ifdef MEMORY_USAGE
-	getrusage(RUSAGE_SELF,&ru);
-#  ifdef __APPLE__
-	memusage = ru.ru_maxrss;
-#  else
-	memusage = ru.ru_maxrss * UINT64_C(1024);
-#  endif
-#  ifdef __linux__
-	if (memusage==0) {
-		int fd = open("/proc/self/statm",O_RDONLY);
-		char statbuff[1000];
-		int l;
-		if (fd>=0) {
-			l = read(fd,statbuff,1000);
-			if (l<1000 && l>0) {
-				statbuff[l]=0;
-				memusage = strtoul(statbuff,NULL,10)*getpagesize();
-			}
-			close(fd);
-		}
-	}
-#  endif
-	if (memusage>0) {
-		data[CHARTS_MEMORY] = memusage;
-	}
-#endif
 
 	chunk_stats(&del,&repl);
 	data[CHARTS_DELCHUNK]=del;
@@ -247,32 +174,12 @@ void chartsdata_store(void) {
 }
 
 int chartsdata_init (void) {
-#ifdef CPU_USAGE
-	struct itimerval uc,pc;
-#endif
-#ifdef MEMORY_USAGE
-	struct rusage ru;
-#endif
+	cpu_init();
+	scpu = ucpu = 0;
+	mem_used(&rss,&virt);
 
-#ifdef CPU_USAGE
-	it_set.it_interval.tv_sec = 0;
-	it_set.it_interval.tv_usec = 0;
-	it_set.it_value.tv_sec = 999;
-	it_set.it_value.tv_usec = 999999;
-	setitimer(ITIMER_VIRTUAL,&it_set,&uc);             // user time
-	setitimer(ITIMER_PROF,&it_set,&pc);                // user time + system time
-#endif
-#ifdef MEMORY_USAGE
-	getrusage(RUSAGE_SELF,&ru);
-#  ifdef __APPLE__
-	memusage = ru.ru_maxrss;
-#  else
-	memusage = ru.ru_maxrss * 1024;
-#  endif
-#endif
-
-	main_timeregister(TIMEMODE_RUN_LATE,60,0,chartsdata_refresh);
-	main_timeregister(TIMEMODE_RUN_LATE,3600,0,chartsdata_store);
-	main_destructregister(chartsdata_term);
-	return charts_init(calcdefs,statdefs,estatdefs,CHARTS_FILENAME);
+	main_time_register(60,0,chartsdata_refresh);
+	main_time_register(3600,30,chartsdata_store);
+	main_destruct_register(chartsdata_term);
+	return charts_init(calcdefs,statdefs,estatdefs,CHARTS_FILENAME,0);
 }
